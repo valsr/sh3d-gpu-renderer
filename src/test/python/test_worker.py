@@ -1,0 +1,171 @@
+"""Tests worker.py inside Blender:
+blender -b --factory-startup --python-exit-code 1 --python src/test/python/test_worker.py
+"""
+import importlib.util
+import json
+import os
+import sys
+import tempfile
+
+import bpy
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+WORKER = os.path.join(HERE, "..", "..", "main", "resources", "sh3d", "gpurenderer", "worker.py")
+spec = importlib.util.spec_from_file_location("worker", WORKER)
+worker = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(worker)
+
+TMP = tempfile.mkdtemp(prefix="sh3d-worker-test")
+print("images in", TMP)
+
+# Sweet Home 3D frame: centimeters, Y up. A grey 8 m floor and a red 1 m cube centered at x = +150 cm
+OBJ = """mtllib scene.mtl
+o floor
+v -400 0 -400
+v -400 0 400
+v 400 0 400
+v 400 0 -400
+vn 0 1 0
+usemtl grey
+f 1//1 2//1 3//1 4//1
+o cube
+v 100 0 -50
+v 200 0 -50
+v 200 0 50
+v 100 0 50
+v 100 100 -50
+v 200 100 -50
+v 200 100 50
+v 100 100 50
+usemtl red
+f 9 12 11 10
+f 9 10 6 5
+f 10 11 7 6
+f 11 12 8 7
+f 12 9 5 8
+usemtl bulb
+f 5 6 7 8
+"""
+MTL = """newmtl grey
+Kd 0.6 0.6 0.6
+newmtl red
+Kd 0.9 0.02 0.02
+newmtl bulb
+Kd 1 1 1
+"""
+NIGHT = [0.3, -0.8, 0.5]
+NOON = [0.3, 0.8, 0.5]
+
+
+def write_scene(name, lights, emissive=()):
+    folder = os.path.join(TMP, name)
+    os.makedirs(folder)
+    with open(os.path.join(folder, "scene.obj"), "w") as f:
+        f.write(OBJ)
+    with open(os.path.join(folder, "scene.mtl"), "w") as f:
+        f.write(MTL)
+    scene = {"obj": "scene.obj", "lightColor": [1, 1, 1], "skyColor": [0.8, 0.9, 1], "skyTexture": None,
+             "groundColor": [0.5, 0.5, 0.5], "northDirection": 0,
+             "lights": lights, "emissiveMaterials": list(emissive)}
+    path = os.path.join(folder, "scene.json")
+    with open(path, "w") as f:
+        json.dump(scene, f)
+    return path
+
+
+def render(name, sun, position=(0, 600, 0), direction=(0, -1, 0), up=(0, 0, 1), lens="PINHOLE",
+           width=64, height=48):
+    """Renders from above by default and returns (width, height, RGBA float pixels from bottom left)."""
+    output = os.path.join(TMP, name + ".png")
+    worker.render({"output": output, "width": width, "height": height, "samples": 16,
+                   "camera": {"position": list(position), "direction": list(direction), "up": list(up),
+                              "fov": 1.1, "lens": lens},
+                   "sunDirection": sun})
+    image = bpy.data.images.load(output)
+    result = (image.size[0], image.size[1], list(image.pixels))
+    bpy.data.images.remove(image)
+    return result
+
+
+def brightness(pixels, width, x0, x1, y0, y1):
+    """Mean of R+G+B over pixel columns [x0, x1) and rows [y0, y1)."""
+    total = 0
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            i = (y * width + x) * 4
+            total += pixels[i] + pixels[i + 1] + pixels[i + 2]
+    return total / ((x1 - x0) * (y1 - y0))
+
+
+def redness(pixels, width, x0, x1, y0, y1):
+    total = 0
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            i = (y * width + x) * 4
+            total += pixels[i] - (pixels[i + 1] + pixels[i + 2]) / 2
+    return total / ((x1 - x0) * (y1 - y0))
+
+
+def check(condition, message):
+    if not condition:
+        raise AssertionError(message)
+    print("ok:", message)
+
+
+device = worker.configure_device()
+expected_device = os.environ.get("SH3D_EXPECT_DEVICE", "HIP")
+check(device == expected_device, "Cycles device is %s (got %s)" % (expected_device, device))
+
+# Night without any lamp
+worker.load({"scene": write_scene("dark", [])})
+check(bpy.context.scene.render.engine == "CYCLES", "scene renders with Cycles")
+w, h, dark = render("dark", NIGHT)
+check((w, h) == (64, 48), "image has the requested size (got %dx%d)" % (w, h))
+dark_floor = brightness(dark, w, 24, 40, 16, 32)
+
+# Seen from above with image top towards +Z, a right handed frame shows +X on the left
+w, h, noon = render("noon", NOON)
+check(redness(noon, w, 16, 22, 21, 27) > 0.2, "cube at +X is in the left half seen from above")
+check(redness(noon, w, 42, 48, 21, 27) < 0.05, "no cube in the right half seen from above")
+noon_floor = brightness(noon, w, 24, 40, 16, 32)
+check(noon_floor > 10 * dark_floor + 0.3, "floor is lit by day (%.3f) and dark by night (%.3f)" % (noon_floor, dark_floor))
+check(noon_floor < 2.9, "sunlit floor isn't burnt out (%.3f)" % noon_floor)
+
+# Sun at 45 degrees towards +X: the 1 m high cube shades the floor at its -X side
+w, h, morning = render("morning", [0.7, 0.7, 0])
+shaded = brightness(morning, w, 25, 31, 22, 26)
+sunny = brightness(morning, w, 8, 13, 22, 26)
+check(shaded < 0.6 * sunny, "cube shadow is opposite to the sun (%.3f in shadow, %.3f in the sun)" % (shaded, sunny))
+
+# Camera at eye height looking horizontally at the cube sees it in the image center
+w, h, front = render("front", NOON, position=(-300, 50, 0), direction=(1, 0, 0), up=(0, 1, 0))
+check(redness(front, w, 28, 36, 20, 28) > 0.2, "cube is in the center when the camera looks at it")
+w, h, back = render("back", NOON, position=(-300, 50, 0), direction=(-1, 0, 0), up=(0, 1, 0))
+check(redness(back, w, 0, 64, 0, 48) < 0.05, "cube isn't visible when the camera looks away")
+
+# Panoramic lenses
+w, h, spherical = render("spherical", NOON, position=(-300, 50, 0), direction=(-1, 0, 0), up=(0, 1, 0),
+                         lens="SPHERICAL", width=96, height=48)
+check(redness(spherical, w, 0, 2, 22, 26) + redness(spherical, w, 94, 96, 22, 26) > 0.4,
+      "spherical lens sees the cube behind the camera at the image sides")
+w, h, fisheye = render("fisheye", NOON, position=(-300, 50, 0), direction=(1, 0, 0), up=(0, 1, 0),
+                       lens="FISHEYE", width=48, height=48)
+check(brightness(fisheye, w, 0, 3, 0, 3) < 0.01, "fisheye lens leaves image corners black")
+check(redness(fisheye, w, 22, 26, 22, 26) > 0.2, "fisheye lens sees the cube in the center")
+
+# Night with a lamp above the floor center
+lamp = {"position": [0, 200, 0], "color": [1, 1, 1], "radius": 5, "power": 0.5}
+worker.load({"scene": write_scene("lamp", [lamp])})
+w, h, lit = render("lamp", NIGHT)
+lit_floor = brightness(lit, w, 24, 40, 16, 32)
+check(lit_floor > 10 * dark_floor + 0.3, "floor is lit by a lamp at night (%.3f against %.3f)" % (lit_floor, dark_floor))
+check(len([o for o in bpy.data.objects if o.type == "LIGHT"]) == 1, "loading a scene replaces the previous one")
+
+# Light source materials
+worker.load({"scene": write_scene("emissive", [], [{"name": "bulb", "power": 0.5}])})
+bulb = bpy.data.materials["bulb"].node_tree.nodes["Principled BSDF"]
+check(bulb.inputs["Emission Strength"].default_value > 0, "light source material emits light")
+red = bpy.data.materials["red"].node_tree.nodes["Principled BSDF"]
+check(red.inputs["Emission Strength"].default_value == 0, "other materials don't emit light")
+
+print("test_worker OK")
