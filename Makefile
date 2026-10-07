@@ -17,15 +17,15 @@ TESTS := $(patsubst src/test/java/%.java,%,$(shell find src/test/java -name '*Te
 
 JAR := build/gpu-renderer.jar
 
-.PHONY: all test test-java test-worker clean
+.PHONY: all test test-java test-worker render clean
 
 all: $(JAR)
 
-$(JAR): $(MAIN_SRC) $(RESOURCES)
+$(JAR): $(MAIN_SRC) $(RESOURCES) src/main/manifest.mf
 	rm -rf build/classes && mkdir -p build/classes
 	javac -nowarn --release 17 -cp "$(CP)" -d build/classes $(MAIN_SRC)
 	cp -r src/main/resources/. build/classes/
-	jar cf $@ -C build/classes .
+	jar cfm $@ src/main/manifest.mf -C build/classes .
 
 build/test-classes/.stamp: $(JAR) $(TEST_SRC)
 	rm -rf build/test-classes && mkdir -p build/test-classes
@@ -47,3 +47,8 @@ test-worker:
 
 clean:
 	rm -rf build
+
+# Renders a home from the command line, for example: make render ARGS="Studio build/studio.png 1280 720 HIGH"
+render: build/test-classes/.stamp
+	java $(JAVA_OPTS) -Dsh3d.gpurenderer.blender=$(BLENDER) \
+	  -cp "build/test-classes:$(JAR):$(CP)" sh3d.gpurenderer.RenderHomeTool $(ARGS)
