@@ -1,6 +1,15 @@
 package sh3d.gpurenderer;
 
+import java.util.Enumeration;
+
+import javax.media.j3d.Appearance;
+import javax.media.j3d.Group;
+import javax.media.j3d.Link;
+import javax.media.j3d.Node;
+import javax.media.j3d.Shape3D;
+
 import com.eteks.sweethome3d.io.DefaultFurnitureCatalog;
+import com.eteks.sweethome3d.j3d.Object3DBranchFactory;
 import com.eteks.sweethome3d.model.CatalogLight;
 import com.eteks.sweethome3d.model.CatalogPieceOfFurniture;
 import com.eteks.sweethome3d.model.FurnitureCategory;
@@ -18,16 +27,48 @@ final class TestHomes {
   }
 
   /**
-   * Returns a lamp of the default catalog, with or without light source materials.
+   * Returns a lamp of the default catalog. If <code>withLightSourceMaterials</code> is <code>true</code>,
+   * the material of the first visible shape of its model is declared as its light source material.
    */
   static HomeLight createLamp(boolean withLightSourceMaterials) {
     for (FurnitureCategory category : new DefaultFurnitureCatalog().getCategories()) {
       for (CatalogPieceOfFurniture piece : category.getFurniture()) {
         if (piece instanceof CatalogLight
             && ((CatalogLight)piece).getLightSources().length > 0
-            && (((CatalogLight)piece).getLightSourceMaterialNames().length > 0) == withLightSourceMaterials) {
-          return new HomeLight((CatalogLight)piece);
+            && ((CatalogLight)piece).getLightSourceMaterialNames().length == 0) {
+          HomeLight lamp = new HomeLight((CatalogLight)piece);
+          if (withLightSourceMaterials) {
+            String materialName = getFirstAppearanceName(
+                (Node)new Object3DBranchFactory().createObject3D(new Home(), lamp, true));
+            if (materialName == null) {
+              continue;
+            }
+            lamp.setLightSourceMaterialNames(new String [] {materialName});
+          }
+          return lamp;
         }
+      }
+    }
+    return null;
+  }
+
+  private static String getFirstAppearanceName(Node node) {
+    if (node instanceof Group) {
+      Enumeration<?> enumeration = ((Group)node).getAllChildren();
+      while (enumeration.hasMoreElements()) {
+        String name = getFirstAppearanceName((Node)enumeration.nextElement());
+        if (name != null) {
+          return name;
+        }
+      }
+    } else if (node instanceof Link) {
+      return getFirstAppearanceName(((Link)node).getSharedGroup());
+    } else if (node instanceof Shape3D) {
+      // Ignore the invisible shapes of the lamps which are only light sources
+      Appearance appearance = ((Shape3D)node).getAppearance();
+      if (appearance != null
+          && (appearance.getRenderingAttributes() == null || appearance.getRenderingAttributes().getVisible())) {
+        return appearance.getName();
       }
     }
     return null;

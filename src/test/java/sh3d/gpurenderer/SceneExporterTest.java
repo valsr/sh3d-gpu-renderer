@@ -58,7 +58,8 @@ public class SceneExporterTest {
 
     // Lamps with light source materials emit light from these materials instead of point lights
     HomeLight materialLamp = TestHomes.createLamp(true);
-    if (materialLamp != null) {
+    Check.isTrue(materialLamp != null, "default catalog has a lamp with a named material");
+    {
       Home materialHome = TestHomes.createRoomHome(materialLamp);
       materialHome.getEnvironment().setCeillingLightColor(0);
       scene = SceneExporter.export(materialHome, new Object3DBranchFactory(), folder);
@@ -70,8 +71,6 @@ public class SceneExporterTest {
         Check.isTrue(mtl.contains("newmtl " + material.get("name") + "\n"), "emissive material " + material.get("name") + " is in MTL file");
         Check.equal(0.5f, material.get("power"), "emissive material power");
       }
-    } else {
-      System.out.println("SKIPPED: no lamp with light source materials in default catalog");
     }
     System.out.println("SceneExporterTest OK");
     System.exit(0);
