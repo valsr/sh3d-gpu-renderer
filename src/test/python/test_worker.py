@@ -52,12 +52,13 @@ newmtl red
 Kd 0.9 0.02 0.02
 newmtl bulb
 Kd 1 1 1
+d 0.4
 """
 NIGHT = [0.3, -0.8, 0.5]
 NOON = [0.3, 0.8, 0.5]
 
 
-def write_scene(name, lights, emissive=()):
+def write_scene(name, lights, emissive=(), opaque=()):
     folder = os.path.join(TMP, name)
     os.makedirs(folder)
     with open(os.path.join(folder, "scene.obj"), "w") as f:
@@ -66,7 +67,7 @@ def write_scene(name, lights, emissive=()):
         f.write(MTL)
     scene = {"obj": "scene.obj", "lightColor": [1, 1, 1], "skyColor": [0.8, 0.9, 1], "skyTexture": None,
              "groundColor": [0.5, 0.5, 0.5], "northDirection": 0,
-             "lights": lights, "emissiveMaterials": list(emissive)}
+             "lights": lights, "emissiveMaterials": list(emissive), "opaqueMaterials": list(opaque)}
     path = os.path.join(folder, "scene.json")
     with open(path, "w") as f:
         json.dump(scene, f)
@@ -170,6 +171,12 @@ bulb = bpy.data.materials["bulb"].node_tree.nodes["Principled BSDF"]
 check(bulb.inputs["Emission Strength"].default_value > 0, "light source material emits light")
 red = bpy.data.materials["red"].node_tree.nodes["Principled BSDF"]
 check(red.inputs["Emission Strength"].default_value == 0, "other materials don't emit light")
+
+# Materials of walls made transparent in the 3D view
+check(abs(bulb.inputs["Alpha"].default_value - 0.4) < 0.01, "transparent material imported with its transparency")
+worker.load({"scene": write_scene("opaque", [], opaque=["bulb"])})
+bulb = bpy.data.materials["bulb"].node_tree.nodes["Principled BSDF"]
+check(bulb.inputs["Alpha"].default_value == 1, "listed material made opaque")
 
 # Textured materials show their image and use its transparency
 folder = os.path.dirname(write_scene("textured", []))

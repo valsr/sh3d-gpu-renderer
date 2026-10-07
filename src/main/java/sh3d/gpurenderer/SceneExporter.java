@@ -11,9 +11,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import javax.imageio.ImageIO;
 import javax.media.j3d.Appearance;
@@ -41,6 +44,7 @@ import com.eteks.sweethome3d.model.Level;
 import com.eteks.sweethome3d.model.LightSource;
 import com.eteks.sweethome3d.model.Room;
 import com.eteks.sweethome3d.model.Selectable;
+import com.eteks.sweethome3d.model.Wall;
 import com.eteks.sweethome3d.viewcontroller.Object3DFactory;
 
 /**
@@ -72,6 +76,7 @@ final class SceneExporter {
     // Lamps with light source materials, with a flag for each of their exported shapes telling if it emits light
     Map<String, HomeLight> materialLamps = new LinkedHashMap<String, HomeLight>();
     Map<String, List<Boolean>> lightSourceShapes = new LinkedHashMap<String, List<Boolean>>();
+    Set<String> wallAndRoomNames = new HashSet<String>();
 
     float subpartSize = environment.getSubpartSizeUnderLight();
     // Dividing walls and rooms surface in subparts is useless
@@ -85,6 +90,9 @@ final class SceneExporter {
         if (node != null) {
           String itemName = ITEM_NAME_PREFIX + i++;
           writer.writeNode(node, itemName);
+          if (item instanceof Wall || item instanceof Room) {
+            wallAndRoomNames.add(itemName);
+          }
           if (item instanceof HomeLight) {
             HomeLight lamp = (HomeLight)item;
             Level level = lamp.getLevel();
@@ -122,7 +130,11 @@ final class SceneExporter {
     scene.put("groundColor", getColor(environment.getGroundColor()));
     scene.put("northDirection", home.getCompass().getNorthDirection());
     scene.put("lights", lights);
-    scene.put("emissiveMaterials", getEmissiveMaterials(objFile, materialLamps, lightSourceShapes));
+    Map<String, List<String>> itemsMaterials = readItemsMaterials(objFile);
+    scene.put("emissiveMaterials", getEmissiveMaterials(itemsMaterials, materialLamps, lightSourceShapes));
+    scene.put("opaqueMaterials", environment.getWallsAlpha() > 0
+        ? getMaterials(itemsMaterials, wallAndRoomNames)
+        : new ArrayList<String>());
     Files.write(new File(folder, SCENE_FILE).toPath(), (Json.write(scene) + "\n").getBytes(StandardCharsets.UTF_8));
     return scene;
   }
@@ -262,37 +274,54 @@ final class SceneExporter {
   }
 
   /**
-   * Returns the names given in <code>objFile</code> to the materials of the light source shapes
-   * of the lamps in <code>materialLamps</code>, with the power of their lamp.
+   * Returns the material names used by the shapes of each item written in <code>objFile</code>,
+   * in the order of their shapes. The name is <code>null</code> for a shape without material.
    */
-  private static List<Map<String, Object>> getEmissiveMaterials(File objFile, Map<String, HomeLight> materialLamps,
-                                                                Map<String, List<Boolean>> lightSourceShapes) throws IOException {
+  private static Map<String, List<String>> readItemsMaterials(File objFile) throws IOException {
+    Map<String, List<String>> itemsMaterials = new LinkedHashMap<String, List<String>>();
+    List<String> itemMaterials = null;
+    BufferedReader reader = Files.newBufferedReader(objFile.toPath(), StandardCharsets.ISO_8859_1);
+    try {
+      for (String line; (line = reader.readLine()) != null; ) {
+        if (line.startsWith("g ")) {
+          // Groups are named with their item name followed by an underscore
+          String groupName = line.substring(2);
+          int separator = groupName.indexOf('_');
+          String itemName = separator > 0 ? groupName.substring(0, separator) : groupName;
+          itemMaterials = itemsMaterials.get(itemName);
+          if (itemMaterials == null) {
+            itemMaterials = new ArrayList<String>();
+            itemsMaterials.put(itemName, itemMaterials);
+          }
+          itemMaterials.add(null);
+        } else if (line.startsWith("usemtl ") && itemMaterials != null) {
+          itemMaterials.set(itemMaterials.size() - 1, line.substring("usemtl ".length()).trim());
+        }
+      }
+    } finally {
+      reader.close();
+    }
+    return itemsMaterials;
+  }
+
+  /**
+   * Returns the names of the materials of the light source shapes of the lamps
+   * in <code>materialLamps</code>, with the power of their lamp.
+   */
+  private static List<Map<String, Object>> getEmissiveMaterials(Map<String, List<String>> itemsMaterials,
+                                                                Map<String, HomeLight> materialLamps,
+                                                                Map<String, List<Boolean>> lightSourceShapes) {
     Map<String, Float> materialsPower = new LinkedHashMap<String, Float>();
-    if (!materialLamps.isEmpty()) {
-      Map<String, Integer> shapeIndices = new LinkedHashMap<String, Integer>();
-      float lightSourcePower = -1;
-      BufferedReader reader = Files.newBufferedReader(objFile.toPath(), StandardCharsets.ISO_8859_1);
-      try {
-        for (String line; (line = reader.readLine()) != null; ) {
-          if (line.startsWith("g ")) {
-            lightSourcePower = -1;
-            // Groups are named with their item name followed by an underscore
-            String groupName = line.substring(2);
-            int separator = groupName.indexOf('_');
-            String itemName = separator > 0 ? groupName.substring(0, separator) : groupName;
-            List<Boolean> shapes = lightSourceShapes.get(itemName);
-            if (shapes != null) {
-              int shapeIndex = shapeIndices.merge(itemName, 1, Integer::sum) - 1;
-              if (shapeIndex < shapes.size() && shapes.get(shapeIndex)) {
-                lightSourcePower = materialLamps.get(itemName).getPower();
-              }
-            }
-          } else if (line.startsWith("usemtl ") && lightSourcePower >= 0) {
-            materialsPower.merge(line.substring("usemtl ".length()).trim(), lightSourcePower, Math::max);
+    for (Map.Entry<String, HomeLight> lamp : materialLamps.entrySet()) {
+      List<String> materials = itemsMaterials.get(lamp.getKey());
+      List<Boolean> shapes = lightSourceShapes.get(lamp.getKey());
+      // Ignore lamps which shapes weren't written as expected
+      if (materials != null && materials.size() == shapes.size()) {
+        for (int i = 0; i < shapes.size(); i++) {
+          if (shapes.get(i) && materials.get(i) != null) {
+            materialsPower.merge(materials.get(i), lamp.getValue().getPower(), Math::max);
           }
         }
-      } finally {
-        reader.close();
       }
     }
     List<Map<String, Object>> emissiveMaterials = new ArrayList<Map<String, Object>>();
@@ -303,6 +332,23 @@ final class SceneExporter {
       emissiveMaterials.add(emissiveMaterial);
     }
     return emissiveMaterials;
+  }
+
+  /**
+   * Returns the names of the materials used by the items named <code>itemNames</code>.
+   */
+  private static List<String> getMaterials(Map<String, List<String>> itemsMaterials, Set<String> itemNames) {
+    Set<String> materials = new LinkedHashSet<String>();
+    for (Map.Entry<String, List<String>> itemMaterials : itemsMaterials.entrySet()) {
+      if (itemNames.contains(itemMaterials.getKey())) {
+        for (String material : itemMaterials.getValue()) {
+          if (material != null) {
+            materials.add(material);
+          }
+        }
+      }
+    }
+    return new ArrayList<String>(materials);
   }
 
   /**

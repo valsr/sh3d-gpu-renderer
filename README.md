@@ -41,7 +41,8 @@ Light and sky intensities are constants at the top of
     make render ARGS="Studio build/studio.png 1280 720 HIGH sh3d.gpurenderer.BlenderRenderer 0"
 
 Arguments: a `.sh3d` file or the name of a bundled example, the output image, width, height,
-`LOW` or `HIGH`, the renderer class, and the index of a stored camera (the current camera
+`LOW` or `HIGH`, the renderer class, and a camera: the index of a stored camera or
+`x,y,z,yaw,pitch` with angles in degrees (the current camera
 of the home if omitted).
 
 ## Limits

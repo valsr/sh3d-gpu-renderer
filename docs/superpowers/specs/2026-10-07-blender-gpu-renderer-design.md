@@ -64,9 +64,14 @@ written with stable object names so lamps can be matched to their materials.
   "lights": [
     {"position": [x, y, z], "color": [r, g, b], "radius": cm, "power": 0..1}
   ],
-  "emissiveMaterials": [{"name": "...", "power": 0..1}]
+  "emissiveMaterials": [{"name": "...", "power": 0..1}],
+  "opaqueMaterials": ["..."]
 }
 ```
+
+`opaqueMaterials` lists the materials of walls and rooms when the home sets a
+walls transparency for its 3D view; the stock renderers ignore that setting
+and so does this one.
 
 Positions are in Sweet Home 3D's Java3D frame (cm, Y up); the worker converts
 to Blender's (m, Z up) in one place.

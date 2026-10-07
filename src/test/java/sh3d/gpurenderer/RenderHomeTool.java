@@ -17,7 +17,7 @@ import com.eteks.sweethome3d.model.Home;
 
 /**
  * Renders a home from the command line to compare renderers and tune their look:
- * RenderHomeTool home output.png [width height LOW|HIGH rendererClass storedCameraIndex]
+ * RenderHomeTool home output.png [width height LOW|HIGH rendererClass storedCameraIndex|x,y,z,yaw,pitch]
  * where home is a .sh3d file or the name of an example of Sweet Home 3D like Studio.
  */
 public class RenderHomeTool {
@@ -38,9 +38,16 @@ public class RenderHomeTool {
       SAXParserFactory.newInstance().newSAXParser().parse(in, handler);
       home = handler.getHome();
     }
-    Camera camera = args.length > 6
-        ? home.getStoredCameras().get(Integer.parseInt(args [6]))
-        : home.getCamera();
+    Camera camera = home.getCamera();
+    if (args.length > 6 && args [6].contains(",")) {
+      // Camera described by x,y,z,yaw,pitch with angles in degrees, at the time of the home camera
+      String [] values = args [6].split(",");
+      camera = new Camera(Float.parseFloat(values [0]), Float.parseFloat(values [1]), Float.parseFloat(values [2]),
+          (float)Math.toRadians(Float.parseFloat(values [3])), (float)Math.toRadians(Float.parseFloat(values [4])),
+          home.getObserverCamera().getFieldOfView(), home.getCamera().getTime(), Camera.Lens.PINHOLE);
+    } else if (args.length > 6) {
+      camera = home.getStoredCameras().get(Integer.parseInt(args [6]));
+    }
     System.out.println("Camera " + camera.getClass().getSimpleName() + " at " + camera.getX() + ", " + camera.getY() + ", " + camera.getZ()
         + " yaw " + camera.getYaw() + " pitch " + camera.getPitch() + " lens " + camera.getLens()
         + ", " + home.getStoredCameras().size() + " stored cameras");

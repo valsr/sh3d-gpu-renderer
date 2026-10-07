@@ -59,6 +59,26 @@ public class SceneExporterTest {
     float [] position = (float [])lights.get(0).get("position");
     Check.equal("[250.0, " + (home.getWallHeight() - 25) + ", 200.0]", java.util.Arrays.toString(position), "ceiling light location");
 
+    // Walls and rooms made transparent in the 3D view are rendered opaque, as Sweet Home 3D renderers do
+    Check.equal(0, ((List<?>)scene.get("opaqueMaterials")).size(), "no material to make opaque with opaque walls");
+    home.getEnvironment().setWallsAlpha(0.5f);
+    scene = SceneExporter.export(home, new Object3DBranchFactory(), folder);
+    List<String> opaqueMaterials = (List<String>)scene.get("opaqueMaterials");
+    Check.isTrue(opaqueMaterials.size() > 0, "materials of transparent walls listed");
+    String wallsMtl = new String(Files.readAllBytes(new File(folder, "scene.mtl").toPath()), StandardCharsets.ISO_8859_1);
+    int transparentMaterialCount = 0;
+    for (String material : opaqueMaterials) {
+      int definition = wallsMtl.indexOf("newmtl " + material + "\n");
+      Check.isTrue(definition >= 0, "opaque material " + material + " is in MTL file");
+      int end = wallsMtl.indexOf("newmtl ", definition + 1);
+      if (wallsMtl.substring(definition, end < 0 ? wallsMtl.length() : end).contains("\nd 0.5")) {
+        transparentMaterialCount++;
+      }
+    }
+    Check.isTrue(transparentMaterialCount > 0, "transparent material of walls listed");
+    Check.equal(transparentMaterialCount, wallsMtl.split("\nd 0.5", -1).length - 1, "all transparent materials listed");
+    home.getEnvironment().setWallsAlpha(0);
+
     // Textures are written beside the MTL file which references them
     CatalogTexture texture = new DefaultTexturesCatalog().getCategories().get(0).getTextures().get(0);
     home.getRooms().get(0).setFloorTexture(new HomeTexture(texture));

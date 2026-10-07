@@ -99,6 +99,7 @@ def set_emission(principled, color, strength):
 
 def adapt_materials(scene_description):
     emissive = {m["name"]: m["power"] for m in scene_description["emissiveMaterials"]}
+    opaque = set(scene_description["opaqueMaterials"])
     for material in bpy.data.materials:
         principled = find_principled(material)
         if principled is None:
@@ -111,6 +112,10 @@ def adapt_materials(scene_description):
             texture = base_color.links[0].from_node
             if texture.type == "TEX_IMAGE" and texture.image is not None and texture.image.channels == 4:
                 tree.links.new(texture.outputs["Alpha"], alpha)
+        if material.name in opaque:
+            for link in list(alpha.links):
+                tree.links.remove(link)
+            alpha.default_value = 1
         if not alpha.is_linked and alpha.default_value < 0.5:
             principled.inputs["Roughness"].default_value = TRANSPARENT_ROUGHNESS
         if material.name in emissive:
