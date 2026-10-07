@@ -6,6 +6,10 @@ empty :=
 space := $(empty) $(empty)
 CP := $(subst $(space),:,$(wildcard $(SH3D_JARS)/*.jar) $(wildcard $(J3D_JARS)/*.jar))
 
+# Same options as Sweet Home 3D launcher, Java 3D needing a display even to build scenes
+JAVA_OPTS := -Djava.library.path=$(J3D_JARS) \
+  --add-opens=java.desktop/sun.awt=ALL-UNNAMED
+
 MAIN_SRC := $(shell find src/main/java -name '*.java' 2>/dev/null)
 TEST_SRC := $(shell find src/test/java -name '*.java' 2>/dev/null)
 RESOURCES := $(shell find src/main/resources -type f 2>/dev/null)
@@ -34,7 +38,7 @@ test: test-java test-worker
 test-java: build/test-classes/.stamp
 	@for t in $(subst /,.,$(TESTS)); do \
 	  echo "== $$t"; \
-	  java -Djava.awt.headless=true -Dsh3d.gpurenderer.blender=$(BLENDER) \
+	  java $(JAVA_OPTS) -Dsh3d.gpurenderer.blender=$(BLENDER) \
 	    -cp "build/test-classes:$(JAR):$(CP)" $$t || exit 1; \
 	done
 

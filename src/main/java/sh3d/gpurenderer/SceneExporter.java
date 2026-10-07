@@ -1,0 +1,341 @@
+package sh3d.gpurenderer;
+
+import java.awt.Graphics2D;
+import java.awt.geom.AffineTransform;
+import java.awt.image.BufferedImage;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import javax.imageio.ImageIO;
+import javax.media.j3d.Appearance;
+import javax.media.j3d.Group;
+import javax.media.j3d.Link;
+import javax.media.j3d.Node;
+import javax.media.j3d.RenderingAttributes;
+import javax.media.j3d.Shape3D;
+import javax.media.j3d.Transform3D;
+import javax.media.j3d.TransformGroup;
+import javax.vecmath.Point3f;
+import javax.vecmath.Vector3d;
+import javax.vecmath.Vector3f;
+
+import com.eteks.sweethome3d.j3d.Ground3D;
+import com.eteks.sweethome3d.j3d.OBJWriter;
+import com.eteks.sweethome3d.model.DimensionLine;
+import com.eteks.sweethome3d.model.Home;
+import com.eteks.sweethome3d.model.HomeEnvironment;
+import com.eteks.sweethome3d.model.HomeFurnitureGroup;
+import com.eteks.sweethome3d.model.HomeLight;
+import com.eteks.sweethome3d.model.HomePieceOfFurniture;
+import com.eteks.sweethome3d.model.HomeTexture;
+import com.eteks.sweethome3d.model.Level;
+import com.eteks.sweethome3d.model.LightSource;
+import com.eteks.sweethome3d.model.Room;
+import com.eteks.sweethome3d.model.Selectable;
+import com.eteks.sweethome3d.viewcontroller.Object3DFactory;
+
+/**
+ * Writes a home as an OBJ file with its materials and textures, and a JSON file
+ * describing its lights and environment, in Sweet Home 3D's frame (centimeters, Y up).
+ */
+final class SceneExporter {
+  static final String SCENE_FILE = "scene.json";
+
+  private static final String OBJ_FILE = "scene.obj";
+  private static final String SKY_TEXTURE_FILE = "sky.png";
+  private static final String ITEM_NAME_PREFIX = "item";
+  private static final float  GROUND_SIZE = 1E7f;
+  // Default radius used by Sweet Home 3D for light sources without diameter
+  private static final float  DEFAULT_LIGHT_SOURCE_RADIUS = 3.25f;
+  private static final float  CEILING_LIGHT_RADIUS = 20;
+  private static final float  CEILING_LIGHT_DISTANCE = 25;
+
+  private SceneExporter() {
+  }
+
+  /**
+   * Exports <code>home</code> in <code>folder</code> and returns the content
+   * of the file {@link #SCENE_FILE} written in this folder.
+   */
+  static Map<String, Object> export(Home home, Object3DFactory object3dFactory, File folder) throws IOException {
+    HomeEnvironment environment = home.getEnvironment();
+    List<Map<String, Object>> lights = new ArrayList<Map<String, Object>>();
+    // Lamps with light source materials, with a flag for each of their exported shapes telling if it emits light
+    Map<String, HomeLight> materialLamps = new LinkedHashMap<String, HomeLight>();
+    Map<String, List<Boolean>> lightSourceShapes = new LinkedHashMap<String, List<Boolean>>();
+
+    float subpartSize = environment.getSubpartSizeUnderLight();
+    // Dividing walls and rooms surface in subparts is useless
+    environment.setSubpartSizeUnderLight(0);
+    File objFile = new File(folder, OBJ_FILE);
+    OBJWriter writer = new OBJWriter(objFile, null, -1);
+    try {
+      int i = 0;
+      for (Selectable item : getExportedItems(home)) {
+        Node node = (Node)object3dFactory.createObject3D(home, item, true);
+        if (node != null) {
+          String itemName = ITEM_NAME_PREFIX + i++;
+          writer.writeNode(node, itemName);
+          if (item instanceof HomeLight) {
+            HomeLight lamp = (HomeLight)item;
+            Level level = lamp.getLevel();
+            if (lamp.getPower() > 0
+                && (level == null || level.isViewableAndVisible())) {
+              if (lamp.getLightSourceMaterialNames().length > 0) {
+                List<Boolean> shapes = new ArrayList<Boolean>();
+                listLightSourceShapes(node, lamp.getLightSourceMaterialNames(), shapes);
+                materialLamps.put(itemName, lamp);
+                lightSourceShapes.put(itemName, shapes);
+              } else {
+                addLightSources(lamp, lights);
+              }
+            }
+          }
+        }
+      }
+      // Create a 3D ground large enough to join the sky at the horizon, placed under floors
+      Transform3D translation = new Transform3D();
+      translation.setTranslation(new Vector3f(0, -0.1f, 0));
+      TransformGroup ground = new TransformGroup(translation);
+      ground.addChild(new Ground3D(home, -GROUND_SIZE / 2, -GROUND_SIZE / 2, GROUND_SIZE, GROUND_SIZE, true));
+      writer.writeNode(ground, "ground");
+    } finally {
+      environment.setSubpartSizeUnderLight(subpartSize);
+      writer.close();
+    }
+    addCeilingLights(home, lights);
+
+    Map<String, Object> scene = new LinkedHashMap<String, Object>();
+    scene.put("obj", OBJ_FILE);
+    scene.put("lightColor", getColor(environment.getLightColor()));
+    scene.put("skyColor", getColor(environment.getSkyColor()));
+    scene.put("skyTexture", exportSkyTexture(environment.getSkyTexture(), folder));
+    scene.put("groundColor", getColor(environment.getGroundColor()));
+    scene.put("northDirection", home.getCompass().getNorthDirection());
+    scene.put("lights", lights);
+    scene.put("emissiveMaterials", getEmissiveMaterials(objFile, materialLamps, lightSourceShapes));
+    Files.write(new File(folder, SCENE_FILE).toPath(), (Json.write(scene) + "\n").getBytes(StandardCharsets.UTF_8));
+    return scene;
+  }
+
+  /**
+   * Returns the viewable items of <code>home</code> with furniture groups replaced by their furniture.
+   */
+  private static List<Selectable> getExportedItems(Home home) {
+    List<Selectable> items = new ArrayList<Selectable>();
+    for (Selectable item : home.getSelectableViewableItems()) {
+      if (item instanceof HomeFurnitureGroup) {
+        for (HomePieceOfFurniture piece : ((HomeFurnitureGroup)item).getAllFurniture()) {
+          if (!(piece instanceof HomeFurnitureGroup)) {
+            items.add(piece);
+          }
+        }
+      } else if (!(item instanceof DimensionLine)) {
+        items.add(item);
+      }
+    }
+    return items;
+  }
+
+  static float [] getColor(int rgb) {
+    return new float [] {((rgb >> 16) & 0xFF) / 255f, ((rgb >> 8) & 0xFF) / 255f, (rgb & 0xFF) / 255f};
+  }
+
+  /**
+   * Adds to <code>lights</code> the light sources of <code>lamp</code> at their location in the home.
+   */
+  private static void addLightSources(HomeLight lamp, List<Map<String, Object>> lights) {
+    Transform3D lampTransform = getNormalizedModelTransformation(lamp);
+    for (LightSource lightSource : lamp.getLightSources()) {
+      Point3f location = new Point3f(lightSource.getX() - 0.5f, lightSource.getZ() - 0.5f, 0.5f - lightSource.getY());
+      lampTransform.transform(location);
+      float radius = lightSource.getDiameter() != null
+          ? lightSource.getDiameter() * lamp.getWidth() / 2
+          : DEFAULT_LIGHT_SOURCE_RADIUS;
+      lights.add(createLight(location.x, location.y, location.z, lightSource.getColor(), radius, lamp.getPower()));
+    }
+  }
+
+  private static Map<String, Object> createLight(float x, float y, float z, int color, float radius, float power) {
+    Map<String, Object> light = new LinkedHashMap<String, Object>();
+    light.put("position", new float [] {x, y, z});
+    light.put("color", getColor(color));
+    light.put("radius", radius);
+    light.put("power", power);
+    return light;
+  }
+
+  /**
+   * Returns the transformation placing in the home the model of <code>piece</code> normalized in a unit cube.
+   * Contrary to Sweet Home 3D, the center of a piece rotated around an horizontal axis
+   * isn't recomputed from its rotated bounds.
+   */
+  private static Transform3D getNormalizedModelTransformation(HomePieceOfFurniture piece) {
+    Transform3D modelTransform = new Transform3D();
+    if (piece.isHorizontallyRotated()) {
+      if (piece.getPitch() != 0) {
+        modelTransform.rotX(-piece.getPitch());
+      }
+      if (piece.getRoll() != 0) {
+        Transform3D rollRotation = new Transform3D();
+        rollRotation.rotZ(-piece.getRoll());
+        modelTransform.mul(rollRotation, modelTransform);
+      }
+    }
+    Transform3D scale = new Transform3D();
+    scale.setScale(new Vector3d(piece.isModelMirrored() ? -piece.getWidth() : piece.getWidth(),
+        piece.getHeight(), piece.getDepth()));
+    modelTransform.mul(scale);
+
+    Transform3D verticalRotation = new Transform3D();
+    verticalRotation.rotY(-piece.getAngle());
+    verticalRotation.mul(modelTransform);
+
+    Transform3D pieceTransform = new Transform3D();
+    float levelElevation = piece.getLevel() != null ? piece.getLevel().getElevation() : 0;
+    pieceTransform.setTranslation(new Vector3f(piece.getX(),
+        piece.getElevation() + piece.getHeight() / 2 + levelElevation, piece.getY()));
+    pieceTransform.mul(verticalRotation);
+    return pieceTransform;
+  }
+
+  /**
+   * Adds a light under the ceiling of each room which has one, as Sweet Home 3D renderers do.
+   */
+  private static void addCeilingLights(Home home, List<Map<String, Object>> lights) {
+    int ceilingLightColor = home.getEnvironment().getCeillingLightColor();
+    if (ceilingLightColor > 0) {
+      for (Room room : home.getRooms()) {
+        Level level = room.getLevel();
+        if (room.isCeilingVisible()
+            && (level == null || level.isViewableAndVisible())) {
+          float ceilingElevation = level != null
+              ? level.getElevation() + level.getHeight()
+              : home.getWallHeight();
+          // Power of a lamp emitting as much light as the ceiling light of Sweet Home 3D for the room area
+          float power = (float)Math.sqrt(Math.sqrt(room.getArea()) / 2000);
+          lights.add(createLight(room.getXCenter(), ceilingElevation - CEILING_LIGHT_DISTANCE, room.getYCenter(),
+              ceilingLightColor, CEILING_LIGHT_RADIUS, power));
+        }
+      }
+    }
+  }
+
+  /**
+   * Adds to <code>shapes</code> a flag for each shape of <code>node</code> written by <code>OBJWriter</code>,
+   * in the same order, equal to <code>true</code> for shapes using a light source material.
+   */
+  private static void listLightSourceShapes(Node node, String [] lightSourceMaterialNames, List<Boolean> shapes) {
+    if (node instanceof Group) {
+      Enumeration<?> enumeration = ((Group)node).getAllChildren();
+      while (enumeration.hasMoreElements()) {
+        listLightSourceShapes((Node)enumeration.nextElement(), lightSourceMaterialNames, shapes);
+      }
+    } else if (node instanceof Link) {
+      listLightSourceShapes(((Link)node).getSharedGroup(), lightSourceMaterialNames, shapes);
+    } else if (node instanceof Shape3D) {
+      Shape3D shape = (Shape3D)node;
+      Appearance appearance = shape.getAppearance();
+      RenderingAttributes renderingAttributes = appearance != null ? appearance.getRenderingAttributes() : null;
+      if (shape.numGeometries() >= 1
+          && (renderingAttributes == null || renderingAttributes.getVisible())) {
+        boolean lightSource = false;
+        if (appearance != null) {
+          for (String name : lightSourceMaterialNames) {
+            if (name.equals(appearance.getName())) {
+              lightSource = true;
+            }
+          }
+        }
+        shapes.add(lightSource);
+      }
+    }
+  }
+
+  /**
+   * Returns the names given in <code>objFile</code> to the materials of the light source shapes
+   * of the lamps in <code>materialLamps</code>, with the power of their lamp.
+   */
+  private static List<Map<String, Object>> getEmissiveMaterials(File objFile, Map<String, HomeLight> materialLamps,
+                                                                Map<String, List<Boolean>> lightSourceShapes) throws IOException {
+    Map<String, Float> materialsPower = new LinkedHashMap<String, Float>();
+    if (!materialLamps.isEmpty()) {
+      Map<String, Integer> shapeIndices = new LinkedHashMap<String, Integer>();
+      float lightSourcePower = -1;
+      BufferedReader reader = Files.newBufferedReader(objFile.toPath(), StandardCharsets.ISO_8859_1);
+      try {
+        for (String line; (line = reader.readLine()) != null; ) {
+          if (line.startsWith("g ")) {
+            lightSourcePower = -1;
+            // Groups are named with their item name followed by an underscore
+            String groupName = line.substring(2);
+            int separator = groupName.indexOf('_');
+            String itemName = separator > 0 ? groupName.substring(0, separator) : groupName;
+            List<Boolean> shapes = lightSourceShapes.get(itemName);
+            if (shapes != null) {
+              int shapeIndex = shapeIndices.merge(itemName, 1, Integer::sum) - 1;
+              if (shapeIndex < shapes.size() && shapes.get(shapeIndex)) {
+                lightSourcePower = materialLamps.get(itemName).getPower();
+              }
+            }
+          } else if (line.startsWith("usemtl ") && lightSourcePower >= 0) {
+            materialsPower.merge(line.substring("usemtl ".length()).trim(), lightSourcePower, Math::max);
+          }
+        }
+      } finally {
+        reader.close();
+      }
+    }
+    List<Map<String, Object>> emissiveMaterials = new ArrayList<Map<String, Object>>();
+    for (Map.Entry<String, Float> material : materialsPower.entrySet()) {
+      Map<String, Object> emissiveMaterial = new LinkedHashMap<String, Object>();
+      emissiveMaterial.put("name", material.getKey());
+      emissiveMaterial.put("power", material.getValue());
+      emissiveMaterials.add(emissiveMaterial);
+    }
+    return emissiveMaterials;
+  }
+
+  /**
+   * Writes the sky texture as an image covering the whole sphere around the home
+   * and returns its file name, or <code>null</code> if there's no sky texture.
+   */
+  private static String exportSkyTexture(HomeTexture skyTexture, File folder) throws IOException {
+    if (skyTexture == null) {
+      return null;
+    }
+    InputStream in = skyTexture.getImage().openStream();
+    BufferedImage skyImage;
+    try {
+      skyImage = ImageIO.read(in);
+    } finally {
+      in.close();
+    }
+    if (skyImage == null) {
+      return null;
+    }
+    // The sky image covers the top half of the sphere, its mirror the bottom half to avoid a line at the horizon
+    BufferedImage sphereImage = new BufferedImage(skyImage.getWidth(), skyImage.getHeight() * 2, BufferedImage.TYPE_INT_RGB);
+    Graphics2D g2D = (Graphics2D)sphereImage.getGraphics();
+    float xOffset = skyImage.getWidth() * skyTexture.getXOffset();
+    AffineTransform mirrorTransform = AffineTransform.getScaleInstance(1, -1);
+    mirrorTransform.translate(xOffset, -2 * skyImage.getHeight());
+    g2D.drawRenderedImage(skyImage, mirrorTransform);
+    mirrorTransform.translate(-skyImage.getWidth(), 0);
+    g2D.drawRenderedImage(skyImage, mirrorTransform);
+    g2D.drawRenderedImage(skyImage, AffineTransform.getTranslateInstance(xOffset, 0));
+    g2D.drawRenderedImage(skyImage, AffineTransform.getTranslateInstance(xOffset - skyImage.getWidth(), 0));
+    g2D.dispose();
+    ImageIO.write(sphereImage, "png", new File(folder, SKY_TEXTURE_FILE));
+    return SKY_TEXTURE_FILE;
+  }
+}
