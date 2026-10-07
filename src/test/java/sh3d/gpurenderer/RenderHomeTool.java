@@ -38,6 +38,20 @@ public class RenderHomeTool {
       SAXParserFactory.newInstance().newSAXParser().parse(in, handler);
       home = handler.getHome();
     }
+    // Select the level named by the system property "level" to show it with the levels under it
+    String levelName = System.getProperty("level");
+    if (levelName != null) {
+      for (com.eteks.sweethome3d.model.Level level : home.getLevels()) {
+        if (levelName.equals(level.getName())) {
+          home.setSelectedLevel(level);
+        }
+      }
+      // Show the levels up to the selected one, as the application does when a level is selected
+      for (com.eteks.sweethome3d.model.Level level : home.getLevels()) {
+        level.setVisible(level.getElevation() <= home.getSelectedLevel().getElevation());
+      }
+      System.out.println("Selected level " + home.getSelectedLevel().getName());
+    }
     Camera camera = home.getCamera();
     if (args.length > 6 && args [6].contains(",")) {
       // Camera described by x,y,z,yaw,pitch with angles in degrees, at the time of the home camera
