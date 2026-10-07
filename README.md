@@ -16,10 +16,15 @@ Blender 4.0 or later on `PATH` with a GPU that Cycles supports.
 
 ## Install
 
-Add the jar as a Java agent to the options Sweet Home 3D is started with, for example in
-a launcher wrapper:
+    make
+    sudo make install     # copies the jar to /usr/lib/sweethome3d/gpu-renderer/
 
-    export JAVA_TOOL_OPTIONS="-javaagent:/work/sh3d/gpu-renderer/build/gpu-renderer.jar"
+Then add the jar as a Java agent to the options Sweet Home 3D is started with, for example
+in a launcher wrapper:
+
+    export JAVA_TOOL_OPTIONS="-javaagent:/usr/lib/sweethome3d/gpu-renderer/gpu-renderer.jar"
+
+`sudo make uninstall` removes it. `INSTALL_DIR` and `DESTDIR` change where the jar goes.
 
 The renderer is used when quality is set to one of the two highest levels of the dialogs.
 

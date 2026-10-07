@@ -1,6 +1,8 @@
 SH3D_JARS := /usr/share/java/sweethome3d
 J3D_JARS  := /usr/lib/sweethome3d/java3d-1.5
 BLENDER   ?= blender
+# Folder where the renderer is installed, beside the libraries of Sweet Home 3D
+INSTALL_DIR ?= /usr/lib/sweethome3d/gpu-renderer
 
 empty :=
 space := $(empty) $(empty)
@@ -17,7 +19,7 @@ TESTS := $(patsubst src/test/java/%.java,%,$(shell find src/test/java -name '*Te
 
 JAR := build/gpu-renderer.jar
 
-.PHONY: all test test-java test-worker render clean
+.PHONY: all test test-java test-worker render install uninstall clean
 
 all: $(JAR)
 
@@ -44,6 +46,17 @@ test-java: build/test-classes/.stamp
 
 test-worker:
 	$(BLENDER) -b --factory-startup --python-exit-code 1 --python src/test/python/test_worker.py
+
+# Doesn't build the jar, to avoid files owned by root in build folder when run with sudo
+install:
+	@test -f $(JAR) || { echo "Run make before make install"; exit 1; }
+	install -Dm644 $(JAR) $(DESTDIR)$(INSTALL_DIR)/gpu-renderer.jar
+	@echo "Installed. Start Sweet Home 3D with the Java option:"
+	@echo "  -javaagent:$(INSTALL_DIR)/gpu-renderer.jar"
+
+uninstall:
+	rm -f $(DESTDIR)$(INSTALL_DIR)/gpu-renderer.jar
+	-rmdir $(DESTDIR)$(INSTALL_DIR)
 
 clean:
 	rm -rf build
