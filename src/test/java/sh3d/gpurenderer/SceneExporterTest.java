@@ -6,7 +6,10 @@ import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
 
+import com.eteks.sweethome3d.io.DefaultTexturesCatalog;
 import com.eteks.sweethome3d.j3d.Object3DBranchFactory;
+import com.eteks.sweethome3d.model.CatalogTexture;
+import com.eteks.sweethome3d.model.HomeTexture;
 import com.eteks.sweethome3d.model.Home;
 import com.eteks.sweethome3d.model.HomeLight;
 
@@ -55,6 +58,16 @@ public class SceneExporterTest {
     Check.equal(1, lights.size(), "one ceiling light");
     float [] position = (float [])lights.get(0).get("position");
     Check.equal("[250.0, " + (home.getWallHeight() - 25) + ", 200.0]", java.util.Arrays.toString(position), "ceiling light location");
+
+    // Textures are written beside the MTL file which references them
+    CatalogTexture texture = new DefaultTexturesCatalog().getCategories().get(0).getTextures().get(0);
+    home.getRooms().get(0).setFloorTexture(new HomeTexture(texture));
+    SceneExporter.export(home, new Object3DBranchFactory(), folder);
+    String texturedMtl = new String(Files.readAllBytes(new File(folder, "scene.mtl").toPath()), StandardCharsets.ISO_8859_1);
+    int textureLine = texturedMtl.indexOf("map_Kd ");
+    Check.isTrue(textureLine >= 0, "MTL file references a texture image");
+    String textureFile = texturedMtl.substring(textureLine + "map_Kd ".length(), texturedMtl.indexOf('\n', textureLine)).trim();
+    Check.isTrue(new File(folder, textureFile).length() > 0, "texture image " + textureFile + " written in export folder");
 
     // Lamps with light source materials emit light from these materials instead of point lights
     HomeLight materialLamp = TestHomes.createLamp(true);

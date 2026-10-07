@@ -23,8 +23,10 @@ video* dialogs. Sweet Home 3D builds that list from the system property
 
 - no Sweet Home 3D source is modified;
 - the class must be on the application classpath, which a `.sh3p` plugin cannot
-  provide. The deliverable is therefore `gpu-renderer.jar` plus a launcher that
-  adds it to the classpath and sets the property.
+  provide. The deliverable is therefore `gpu-renderer.jar`, loaded with the JVM
+  option `-javaagent:gpu-renderer.jar`: a Java agent jar is appended to the
+  system class path, and its `premain` sets the property (unless the user
+  already set it). The stock launcher stays untouched.
 
 ## Components
 
@@ -34,6 +36,7 @@ video* dialogs. Sweet Home 3D builds that list from the system property
 | `SceneExporter` | Java | Writes the home to a folder: `scene.obj`, `.mtl` and textures through Sweet Home 3D's `OBJWriter`, plus `scene.json`. |
 | `BlenderWorker` | Java | Starts one headless Blender process and exchanges line-based messages with it. |
 | `Json` | Java | Minimal JSON writer (no third-party dependency). |
+| `Agent` | Java | `premain` declaring `BlenderRenderer` in the renderers property. |
 | `worker.py` | Python (bpy) | Runs inside Blender. Imports the scene, builds materials, lights and world, answers render commands. Bundled in the jar, extracted to the session folder. |
 
 The Java package is `sh3d.gpurenderer`, outside Sweet Home 3D's own packages,
@@ -74,9 +77,13 @@ Java to Blender, one JSON object per line on stdin:
 
 - `{"cmd":"load","scene":"/path/scene.json"}`
 - `{"cmd":"render","output":"/path/frame.png","width":W,"height":H,"samples":N,
-   "camera":{"position":[x,y,z],"yaw":rad,"pitch":rad,"fov":rad,"lens":"PINHOLE|NORMAL|FISHEYE|SPHERICAL"},
+   "camera":{"position":[x,y,z],"direction":[x,y,z],"up":[x,y,z],"fov":rad,"lens":"PINHOLE|NORMAL|FISHEYE|SPHERICAL"},
    "sunDirection":[x,y,z]}`
 - `{"cmd":"quit"}`
+
+The camera direction and up vectors are computed in Java from yaw and pitch,
+in the same frame as positions, so the worker needs no knowledge of Sweet
+Home 3D's angle conventions.
 
 Blender to Java, on stdout, only lines starting with `@@SH3D ` are protocol;
 everything else is Blender's own output and is kept as a rolling log tail:
@@ -101,17 +108,23 @@ everything else is Blender's own output and is kept as a rolling log tail:
 ## Look mapping
 
 - Materials: OBJ import gives Principled BSDF with colour, texture, roughness
-  from shininess, and alpha. Untextured materials with alpha below 0.5 become
-  glass-like (transmission) so windows pass light.
+  from shininess, and alpha. Alpha lets light through windows; untextured
+  materials with alpha below 0.5 are made glossy. The alpha channel of texture
+  images is connected to the material alpha.
 - Lamps: each light source becomes a point light with the source colour, the
-  source radius and a wattage proportional to lamp power squared. Materials
-  named as light-source materials get emission.
+  source radius and a wattage proportional to lamp power squared. A lamp with
+  light-source materials gets emission on those materials instead of point
+  lights, as in the stock renderers. Rooms with a ceiling get a ceiling light
+  when the home's ceiling light colour is set, as in the stock renderers.
+  Light sources of lamps rotated around a horizontal axis or with deformed
+  models are placed without Sweet Home 3D's bounds recentring.
 - Sun and sky: Nishita-type sky texture with the sun direction computed from
   the home's compass and the camera's time. Below the horizon the world goes
   near-black. A sky texture in the home replaces the procedural sky.
 - Lenses: `PINHOLE` and `NORMAL` are perspective; `FISHEYE` and `SPHERICAL`
   are Cycles panoramic (fisheye equidistant 180°, equirectangular).
-- Quality: `LOW` 64 samples, `HIGH` 512, both with OpenImageDenoise. Values
+- Quality: `LOW` 64 samples, `HIGH` 256, both with OpenImageDenoise running
+  on the GPU (on the CPU it costs about 3 s per 720p frame). Values
   live in `BlenderRenderer.properties`, overridable by system property through
   the inherited `getRenderingParameterValue` mechanism.
 
@@ -132,9 +145,10 @@ scale factors are named constants at the top of `worker.py`.
 - `make` compiles with `javac` against `/usr/share/java/sweethome3d/SweetHome3D.jar`
   and the Java3D jars under `/usr/lib/sweethome3d`, and produces
   `build/gpu-renderer.jar`.
-- `bin/sweethome3d-gpu` is a launcher equivalent to the distro one with the jar
-  and the property added. Replacing `/usr/local/bin/sweethome3d` with it is a
-  manual step for the user.
+- Installation is adding `-javaagent:/path/to/gpu-renderer.jar` to the Java
+  options of the user's `/usr/local/bin/sweethome3d` wrapper, a manual step.
+- `make render ARGS="<home> <output.png> ..."` renders a home from the command
+  line with any renderer, to compare looks and timings without the GUI.
 
 ## Testing
 

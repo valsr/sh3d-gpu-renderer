@@ -56,7 +56,13 @@ public class RenderHomeTool {
         break;
       }
     }
-    renderer.dispose();
+    if (renderer instanceof BlenderRenderer && Boolean.getBoolean("keepSession")) {
+      // Keep exported files to run worker.py on them by hand
+      System.out.println("Session folder " + ((BlenderRenderer)renderer).getSessionFolder());
+      renderer.stop();
+    } else {
+      renderer.dispose();
+    }
     ImageIO.write(image, "png", output);
     System.exit(0);
   }

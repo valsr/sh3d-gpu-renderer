@@ -119,6 +119,9 @@ check(device == expected_device, "Cycles device is %s (got %s)" % (expected_devi
 # Night without any lamp
 worker.load({"scene": write_scene("dark", [])})
 check(bpy.context.scene.render.engine == "CYCLES", "scene renders with Cycles")
+check(bpy.context.scene.cycles.device == ("CPU" if device == "CPU" else "GPU"), "scene renders on the configured device")
+check(bpy.context.scene.cycles.use_denoising, "images are denoised")
+check(bpy.context.scene.cycles.denoising_use_gpu == (device != "CPU"), "denoising runs on the GPU when there's one")
 w, h, dark = render("dark", NIGHT)
 check((w, h) == (64, 48), "image has the requested size (got %dx%d)" % (w, h))
 dark_floor = brightness(dark, w, 24, 40, 16, 32)
@@ -167,5 +170,25 @@ bulb = bpy.data.materials["bulb"].node_tree.nodes["Principled BSDF"]
 check(bulb.inputs["Emission Strength"].default_value > 0, "light source material emits light")
 red = bpy.data.materials["red"].node_tree.nodes["Principled BSDF"]
 check(red.inputs["Emission Strength"].default_value == 0, "other materials don't emit light")
+
+# Textured materials show their image and use its transparency
+folder = os.path.dirname(write_scene("textured", []))
+texture = bpy.data.images.new("texture", 4, 4, alpha=True)
+texture.pixels = [0.0, 0.0, 1.0, 0.5] * 16
+texture.filepath_raw = os.path.join(folder, "texture.png")
+texture.file_format = "PNG"
+texture.save()
+with open(os.path.join(folder, "scene.obj"), "w") as f:
+    f.write("mtllib scene.mtl\nv -400 0 -400\nv -400 0 400\nv 400 0 400\nv 400 0 -400\n"
+            "vt 0 0\nvt 0 1\nvt 1 1\nvt 1 0\nvn 0 1 0\nusemtl textured\nf 1/1/1 2/2/1 3/3/1 4/4/1\n")
+with open(os.path.join(folder, "scene.mtl"), "w") as f:
+    f.write("newmtl textured\nKd 1 1 1\nmap_Kd texture.png\n")
+worker.load({"scene": os.path.join(folder, "scene.json")})
+textured = bpy.data.materials["textured"].node_tree.nodes["Principled BSDF"]
+check(textured.inputs["Base Color"].is_linked, "texture image colors the material")
+check(textured.inputs["Alpha"].is_linked, "texture image transparency is used")
+w, h, blue = render("textured", NOON)
+i = (24 * w + 32) * 4
+check(blue[i + 2] > blue[i] + 0.1, "floor shows its blue texture (%.2f %.2f %.2f)" % tuple(blue[i:i + 3]))
 
 print("test_worker OK")

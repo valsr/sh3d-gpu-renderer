@@ -65,9 +65,13 @@ def clear_data():
 
 def configure_scene(scene):
     scene.render.engine = "CYCLES"
-    scene.cycles.device = "CPU" if bpy.context.preferences.addons["cycles"].preferences.compute_device_type == "NONE" else "GPU"
+    gpu = bpy.context.preferences.addons["cycles"].preferences.compute_device_type != "NONE"
+    scene.cycles.device = "GPU" if gpu else "CPU"
     scene.cycles.use_adaptive_sampling = True
     scene.cycles.use_denoising = True
+    # Denoising a frame takes seconds on the CPU and a fraction of a second on the GPU
+    if hasattr(scene.cycles, "denoising_use_gpu"):
+        scene.cycles.denoising_use_gpu = gpu
     scene.cycles.max_bounces = 8
     # Keep the scene in GPU memory between the frames of a video
     scene.render.use_persistent_data = True
