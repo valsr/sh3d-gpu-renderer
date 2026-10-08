@@ -25,6 +25,9 @@ SUN_MIN_HEIGHT = -0.075          # Sun direction height under which it's night, 
 LAMP_WATTS = 200                 # Point light energy for a light source at full power
 EMISSION_STRENGTH = 20           # Emission of a light source material at full power
 TRANSPARENT_ROUGHNESS = 0.05     # Glossiness given to see through materials
+SUN_BLOCKER_MATERIAL = "sun_blocker"
+SUN_BLOCKER_ANGLE = 3            # Half angle in degrees around the direction of the sun where its light is stopped
+SUN_BLOCKER_MAX_BOUNCES = 32     # Transparent surfaces a ray may cross when occluders stop the sun only
 GPU_DEVICE_TYPES = ("OPTIX", "HIP", "ONEAPI", "CUDA", "METAL")
 
 
@@ -185,6 +188,8 @@ def update_sun(scene, sun_direction):
     sky = nodes["sky"]
     background = nodes["sky_background"]
     direction = to_blender(sun_direction).normalized()
+    if SUN_BLOCKER_MATERIAL in bpy.data.materials:
+        bpy.data.materials[SUN_BLOCKER_MATERIAL].node_tree.nodes["sun_dot"].inputs[1].default_value = direction
     day = direction.z > SUN_MIN_HEIGHT
     if day:
         if not background.inputs["Color"].is_linked:
@@ -201,18 +206,58 @@ def update_sun(scene, sun_direction):
         nodes["sky_texture_background"].inputs["Strength"].default_value = 1 if day else 0.02
 
 
-def import_occluders(scene_description, folder):
-    """Adds the objects of the OBJ file scene_description["occluders"], if any, which stop light like
-    the others but aren't seen by the camera: ceilings and levels hidden to view a floor from above."""
+def import_occluders(scene, scene_description, folder):
+    """Adds the objects of the OBJ file scene_description["occluders"], if any: ceilings and levels hidden
+    to view a floor from above, which the camera doesn't see but which stop light. They stop all light
+    like any object, or only the direct light of the sun if scene_description["occludersBlock"] is "sun"."""
     occluders = scene_description.get("occluders")
     if not occluders:
         return
     scene_objects = set(bpy.data.objects)
     bpy.ops.wm.obj_import(filepath=os.path.join(folder, occluders),
                           forward_axis="NEGATIVE_Z", up_axis="Y", global_scale=0.01)
+    sun_only = scene_description.get("occludersBlock") == "sun"
     for obj in bpy.data.objects:
         if obj not in scene_objects:
             obj.visible_camera = False
+            if sun_only:
+                obj.data.materials.clear()
+                obj.data.materials.append(sun_blocker_material())
+    if sun_only:
+        # Rays not going to the sun cross all the occluders on their way
+        scene.cycles.transparent_max_bounces = SUN_BLOCKER_MAX_BOUNCES
+
+
+def sun_blocker_material():
+    """Returns the material of occluders stopping the sun only: transparent, except for the rays
+    going to the sun, in the direction update_sun keeps in its node "sun_dot"."""
+    material = bpy.data.materials.get(SUN_BLOCKER_MATERIAL)
+    if material is None:
+        material = bpy.data.materials.new(SUN_BLOCKER_MATERIAL)
+        material.use_nodes = True
+        nodes = material.node_tree.nodes
+        links = material.node_tree.links
+        nodes.clear()
+        output = nodes.new("ShaderNodeOutputMaterial")
+        # Incoming points back to where the ray comes from: opposite to the sun for a ray going to it
+        geometry = nodes.new("ShaderNodeNewGeometry")
+        dot = nodes.new("ShaderNodeVectorMath")
+        dot.name = "sun_dot"
+        dot.operation = "DOT_PRODUCT"
+        links.new(geometry.outputs["Incoming"], dot.inputs[0])
+        to_sun = nodes.new("ShaderNodeMath")
+        to_sun.operation = "LESS_THAN"
+        to_sun.inputs[1].default_value = -math.cos(math.radians(SUN_BLOCKER_ANGLE))
+        links.new(dot.outputs["Value"], to_sun.inputs[0])
+        transparent = nodes.new("ShaderNodeBsdfTransparent")
+        opaque = nodes.new("ShaderNodeBsdfDiffuse")
+        opaque.inputs["Color"].default_value = (0, 0, 0, 1)
+        mix = nodes.new("ShaderNodeMixShader")
+        links.new(to_sun.outputs["Value"], mix.inputs["Fac"])
+        links.new(transparent.outputs["BSDF"], mix.inputs[1])
+        links.new(opaque.outputs["BSDF"], mix.inputs[2])
+        links.new(mix.outputs["Shader"], output.inputs["Surface"])
+    return material
 
 
 def load(command):
@@ -226,7 +271,7 @@ def load(command):
     configure_scene(scene)
     bpy.ops.wm.obj_import(filepath=os.path.join(folder, scene_description["obj"]),
                           forward_axis="NEGATIVE_Z", up_axis="Y", global_scale=0.01)
-    import_occluders(scene_description, folder)
+    import_occluders(scene, scene_description, folder)
     adapt_materials(scene_description)
     create_lights(scene, scene_description)
     create_world(scene, scene_description, folder)

@@ -15,6 +15,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -74,16 +75,37 @@ final class SceneExporter {
    * of the file {@link #SCENE_FILE} written in this folder.
    */
   static Map<String, Object> export(Home home, Object3DFactory object3dFactory, File folder) throws IOException {
-    return export(home, object3dFactory, folder, false);
+    return export(home, object3dFactory, folder, null);
   }
 
   /**
-   * Exports <code>home</code> as described above. If <code>hiddenItemsBlockLight</code> is <code>true</code>,
+   * Returns what occluders block for a value of the rendering parameter <code>hiddenItemsBlockLight</code>:
+   * <code>"sun"</code>, <code>"all"</code> (also written <code>true</code>) or <code>null</code>
+   * for <code>false</code>.
+   * @throws IllegalArgumentException if <code>parameterValue</code> is none of them
+   */
+  static String getOccludersBlock(String parameterValue) {
+    String value = parameterValue.trim().toLowerCase(Locale.ENGLISH);
+    if (value.equals("false")) {
+      return null;
+    } else if (value.equals("all") || value.equals("true")) {
+      return "all";
+    } else if (value.equals("sun")) {
+      return "sun";
+    } else {
+      throw new IllegalArgumentException("hiddenItemsBlockLight should be false, sun or all, not " + parameterValue);
+    }
+  }
+
+  /**
+   * Exports <code>home</code> as described above. If <code>occludersBlock</code> isn't <code>null</code>,
    * the ceilings and the levels hidden in <code>home</code> are written in a second OBJ file,
-   * named by the <code>occluders</code> entry of the scene, for objects which block light without being seen.
+   * named by the <code>occluders</code> entry of the scene, for objects which aren't seen but block
+   * the light of the sun (<code>"sun"</code>) or all light (<code>"all"</code>), as the
+   * <code>occludersBlock</code> entry tells.
    */
   static Map<String, Object> export(Home home, Object3DFactory object3dFactory, File folder,
-                                    boolean hiddenItemsBlockLight) throws IOException {
+                                    String occludersBlock) throws IOException {
     HomeEnvironment environment = home.getEnvironment();
     List<Map<String, Object>> lights = new ArrayList<Map<String, Object>>();
     // Lamps with light source materials, with a flag for each of their exported shapes telling if it emits light
@@ -137,7 +159,7 @@ final class SceneExporter {
 
     File occludersFile = new File(folder, OCCLUDERS_OBJ_FILE);
     Set<String> occluderWallAndRoomNames = new HashSet<String>();
-    boolean occludersExported = hiddenItemsBlockLight
+    boolean occludersExported = occludersBlock != null
         && exportOccluders(home, object3dFactory, occludersFile, occluderWallAndRoomNames);
     if (!occludersExported) {
       // Don't leave the occluders of a previous export in the folder
@@ -156,6 +178,7 @@ final class SceneExporter {
     scene.put("emissiveMaterials", getEmissiveMaterials(itemsMaterials, materialLamps, lightSourceShapes));
     if (occludersExported) {
       scene.put("occluders", OCCLUDERS_OBJ_FILE);
+      scene.put("occludersBlock", occludersBlock);
     }
     List<String> opaqueMaterials = new ArrayList<String>();
     if (environment.getWallsAlpha() > 0) {

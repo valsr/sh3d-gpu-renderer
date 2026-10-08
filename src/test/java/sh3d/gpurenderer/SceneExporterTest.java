@@ -116,39 +116,50 @@ public class SceneExporterTest {
       File occludersFile = new File(folder, "occluders.obj");
 
       scene = SceneExporter.export(twoLevelHome, factory, folder);
-      Check.isTrue(!scene.containsKey("occluders"), "no occluders unless asked");
+      Check.isTrue(!scene.containsKey("occluders") && !scene.containsKey("occludersBlock"), "no occluders unless asked");
       Check.isTrue(!occludersFile.exists(), "no occluders file unless asked");
       byte [] sceneObj = Files.readAllBytes(new File(folder, "scene.obj").toPath());
       String sceneLights = Json.write(scene.get("lights"));
 
-      scene = SceneExporter.export(twoLevelHome, factory, folder, true);
+      scene = SceneExporter.export(twoLevelHome, factory, folder, "all");
       Check.equal("occluders.obj", scene.get("occluders"), "occluders file name");
+      Check.equal("all", scene.get("occludersBlock"), "occluders block all light");
       Check.equal(6, countOccluders(occludersFile), "ground ceiling, 4 upper walls and upper room block light");
+      Check.equal("sun", SceneExporter.export(twoLevelHome, factory, folder, "sun").get("occludersBlock"),
+          "occluders block the sun only");
+      Check.equal(6, countOccluders(occludersFile), "same occluders whatever they block");
+
+      // Values of the rendering parameter
+      Check.equal(null, SceneExporter.getOccludersBlock("false"), "parameter false");
+      Check.equal("all", SceneExporter.getOccludersBlock("all"), "parameter all");
+      Check.equal("all", SceneExporter.getOccludersBlock("true"), "parameter true");
+      Check.equal("sun", SceneExporter.getOccludersBlock(" Sun "), "parameter sun");
+      Check.thrown(IllegalArgumentException.class, () -> SceneExporter.getOccludersBlock("moon"), "unknown parameter value");
       Check.isTrue(java.util.Arrays.equals(sceneObj, Files.readAllBytes(new File(folder, "scene.obj").toPath())),
           "visible items are written the same with occluders");
       Check.equal(sceneLights, Json.write(scene.get("lights")), "occluders add no light");
       Check.isTrue(!upper.isVisible() && !groundRoom.isCeilingVisible() && groundRoom.isFloorVisible(),
           "home unchanged by the export of occluders");
 
-      SceneExporter.export(twoLevelHome, factory, folder, false);
+      SceneExporter.export(twoLevelHome, factory, folder, null);
       Check.isTrue(!occludersFile.exists(), "occluders file of a previous export removed");
 
       // A visible ceiling is written once, with the visible items
       groundRoom.setCeilingVisible(true);
-      SceneExporter.export(twoLevelHome, factory, folder, true);
+      SceneExporter.export(twoLevelHome, factory, folder, "all");
       Check.equal(5, countOccluders(occludersFile), "visible ceiling isn't an occluder");
       groundRoom.setCeilingVisible(false);
 
       // A level which isn't viewable stays out of the scene
       upper.setViewable(false);
-      SceneExporter.export(twoLevelHome, factory, folder, true);
+      SceneExporter.export(twoLevelHome, factory, folder, "all");
       Check.equal(1, countOccluders(occludersFile), "only the ground ceiling when upper level isn't viewable");
 
       Home roomHome = TestHomes.createRoomHome(null);
-      scene = SceneExporter.export(roomHome, factory, folder, true);
+      scene = SceneExporter.export(roomHome, factory, folder, "all");
       Check.isTrue(!scene.containsKey("occluders") && !occludersFile.exists(), "nothing hidden, no occluders");
       roomHome.getRooms().get(0).setCeilingVisible(false);
-      SceneExporter.export(roomHome, factory, folder, true);
+      SceneExporter.export(roomHome, factory, folder, "all");
       Check.equal(1, countOccluders(occludersFile), "hidden ceiling of a home without levels");
     }
     System.out.println("SceneExporterTest OK");

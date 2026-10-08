@@ -224,6 +224,23 @@ check(capped_floor < noon_floor * 0.5,
       "hidden ceiling shades the floor (%.3f under it, %.3f without)" % (capped_floor, noon_floor))
 check(capped_floor > dark_floor, "floor under the hidden ceiling still gets light from the sides")
 
+# Occluders may stop the sun only, letting the light of the sky through
+capped_scene["occludersBlock"] = "sun"
+with open(path, "w") as f:
+    json.dump(capped_scene, f)
+worker.load({"scene": path})
+w, h, sun_capped = render("sun_capped", NOON)
+check(redness(sun_capped, w, 16, 22, 21, 27) > 0.05, "cube is seen through the ceiling hiding the sun")
+sun_capped_floor = brightness(sun_capped, w, 24, 40, 16, 32)
+check(capped_floor * 1.2 < sun_capped_floor < noon_floor * 0.8,
+      "ceiling hiding the sun only leaves the light of the sky (%.3f, between %.3f and %.3f)"
+      % (sun_capped_floor, capped_floor, noon_floor))
+# The sun in another direction is hidden too
+w, h, sun_capped_morning = render("sun_capped_morning", [0.2, 0.9, 0.1])
+w, h, sun_capped_evening = render("sun_capped_evening", [-0.2, 0.9, -0.1])
+check(abs(brightness(sun_capped_morning, w, 24, 40, 16, 32) - brightness(sun_capped_evening, w, 24, 40, 16, 32))
+      < 0.25 * sun_capped_floor, "no sun on the floor wherever it is")
+
 # A scene loaded afterwards has no occluder left
 worker.load({"scene": write_scene("uncapped", [])})
 check(all(o.visible_camera for o in bpy.data.objects if o.type == "MESH"), "no object hidden without occluders")

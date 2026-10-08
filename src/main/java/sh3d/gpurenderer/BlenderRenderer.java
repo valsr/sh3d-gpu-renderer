@@ -121,7 +121,7 @@ public class BlenderRenderer extends AbstractPhotoRenderer {
           || updatedItems != null && !updatedItems.isEmpty();
       if (sceneUpdated) {
         SceneExporter.export(getHome(), this.object3dFactory, this.sessionFolder,
-            Boolean.parseBoolean(getRenderingParameterValue("hiddenItemsBlockLight")));
+            SceneExporter.getOccludersBlock(getRenderingParameterValue("hiddenItemsBlockLight")));
         this.sceneExported = true;
       }
 
