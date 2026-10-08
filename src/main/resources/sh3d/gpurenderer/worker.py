@@ -9,6 +9,7 @@ Scene files use Sweet Home 3D's frame: centimeters, Y up, right handed.
 import json
 import math
 import os
+import re
 import sys
 import traceback
 
@@ -112,7 +113,8 @@ def adapt_materials(scene_description):
             texture = base_color.links[0].from_node
             if texture.type == "TEX_IMAGE" and texture.image is not None and texture.image.channels == 4:
                 tree.links.new(texture.outputs["Alpha"], alpha)
-        if material.name in opaque:
+        # A material of occluders named like one of the scene got a numeric suffix when imported
+        if material.name in opaque or re.sub(r"\.\d{3}$", "", material.name) in opaque:
             for link in list(alpha.links):
                 tree.links.remove(link)
             alpha.default_value = 1
@@ -199,6 +201,20 @@ def update_sun(scene, sun_direction):
         nodes["sky_texture_background"].inputs["Strength"].default_value = 1 if day else 0.02
 
 
+def import_occluders(scene_description, folder):
+    """Adds the objects of the OBJ file scene_description["occluders"], if any, which stop light like
+    the others but aren't seen by the camera: ceilings and levels hidden to view a floor from above."""
+    occluders = scene_description.get("occluders")
+    if not occluders:
+        return
+    scene_objects = set(bpy.data.objects)
+    bpy.ops.wm.obj_import(filepath=os.path.join(folder, occluders),
+                          forward_axis="NEGATIVE_Z", up_axis="Y", global_scale=0.01)
+    for obj in bpy.data.objects:
+        if obj not in scene_objects:
+            obj.visible_camera = False
+
+
 def load(command):
     """Replaces the current scene by the one described in the JSON file command["scene"]."""
     with open(command["scene"]) as f:
@@ -210,6 +226,7 @@ def load(command):
     configure_scene(scene)
     bpy.ops.wm.obj_import(filepath=os.path.join(folder, scene_description["obj"]),
                           forward_axis="NEGATIVE_Z", up_axis="Y", global_scale=0.01)
+    import_occluders(scene_description, folder)
     adapt_materials(scene_description)
     create_lights(scene, scene_description)
     create_world(scene, scene_description, folder)

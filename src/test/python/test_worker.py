@@ -198,4 +198,34 @@ w, h, blue = render("textured", NOON)
 i = (24 * w + 32) * 4
 check(blue[i + 2] > blue[i] + 0.1, "floor shows its blue texture (%.2f %.2f %.2f)" % tuple(blue[i:i + 3]))
 
+# Occluders block light without being seen: a ceiling 2.5 m above the floor, written in its own file
+# with a material named like one of the scene
+path = write_scene("capped", [])
+folder = os.path.dirname(path)
+with open(os.path.join(folder, "occluders.obj"), "w") as f:
+    f.write("mtllib occluders.mtl\no ceiling\nv -400 250 -400\nv -400 250 400\nv 400 250 400\nv 400 250 -400\n"
+            "vn 0 -1 0\nusemtl grey\nf 1//1 2//1 3//1 4//1\n")
+with open(os.path.join(folder, "occluders.mtl"), "w") as f:
+    f.write("newmtl grey\nKd 0.6 0.6 0.6\n")
+with open(path) as f:
+    capped_scene = json.load(f)
+capped_scene["occluders"] = "occluders.obj"
+with open(path, "w") as f:
+    json.dump(capped_scene, f)
+worker.load({"scene": path})
+meshes = [o for o in bpy.data.objects if o.type == "MESH"]
+check(len(meshes) == 3, "scene and occluders are loaded")
+check(len([o for o in meshes if not o.visible_camera]) == 1, "occluder is hidden from the camera only")
+check(all(o.visible_shadow and o.visible_diffuse for o in meshes), "occluder still stops light")
+w, h, capped = render("capped", NOON)
+check(redness(capped, w, 16, 22, 21, 27) > 0.05, "cube is seen through the hidden ceiling")
+capped_floor = brightness(capped, w, 24, 40, 16, 32)
+check(capped_floor < noon_floor * 0.5,
+      "hidden ceiling shades the floor (%.3f under it, %.3f without)" % (capped_floor, noon_floor))
+check(capped_floor > dark_floor, "floor under the hidden ceiling still gets light from the sides")
+
+# A scene loaded afterwards has no occluder left
+worker.load({"scene": write_scene("uncapped", [])})
+check(all(o.visible_camera for o in bpy.data.objects if o.type == "MESH"), "no object hidden without occluders")
+
 print("test_worker OK")

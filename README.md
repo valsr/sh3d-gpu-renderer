@@ -37,6 +37,7 @@ System properties, all optional:
 | `sh3d.gpurenderer.blender` | `blender` | Blender executable |
 | `sh3d.gpurenderer.BlenderRenderer.lowQuality.samples` | 64 | Samples per pixel at the third quality level |
 | `sh3d.gpurenderer.BlenderRenderer.highQuality.samples` | 256 | Samples per pixel at the fourth quality level |
+| `sh3d.gpurenderer.BlenderRenderer.lowQuality.hiddenItemsBlockLight`, `…highQuality.hiddenItemsBlockLight` | `false` | If `true`, ceilings and levels hidden in the 3D view still block light without being seen, to view a floor from above lit as if the home was complete |
 
 Light and sky intensities are constants at the top of
 `src/main/resources/sh3d/gpurenderer/worker.py`.
