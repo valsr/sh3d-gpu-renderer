@@ -235,14 +235,37 @@ sun_capped_floor = brightness(sun_capped, w, 24, 40, 16, 32)
 check(capped_floor * 1.2 < sun_capped_floor < noon_floor * 0.8,
       "ceiling hiding the sun only leaves the light of the sky (%.3f, between %.3f and %.3f)"
       % (sun_capped_floor, capped_floor, noon_floor))
-# The sun in another direction is hidden too
-w, h, sun_capped_morning = render("sun_capped_morning", [0.2, 0.9, 0.1])
-w, h, sun_capped_evening = render("sun_capped_evening", [-0.2, 0.9, -0.1])
-check(abs(brightness(sun_capped_morning, w, 24, 40, 16, 32) - brightness(sun_capped_evening, w, 24, 40, 16, 32))
-      < 0.25 * sun_capped_floor, "no sun on the floor wherever it is")
+# The sun is hidden wherever it is, which the same directions without occluders are compared to below
+SUN_DIRECTIONS = {"east": [0.4, 0.85, 0.1], "south_west": [-0.3, 0.85, -0.3]}
+sun_capped_floors = {}
+for name, direction in SUN_DIRECTIONS.items():
+    w, h, pixels = render("sun_capped_" + name, direction)
+    sun_capped_floors[name] = brightness(pixels, w, 24, 40, 16, 32)
+check(bpy.context.scene.cycles.transparent_max_bounces == worker.SUN_BLOCKER_MAX_BOUNCES,
+      "rays may cross many occluders stopping the sun only")
 
 # A scene loaded afterwards has no occluder left
 worker.load({"scene": write_scene("uncapped", [])})
 check(all(o.visible_camera for o in bpy.data.objects if o.type == "MESH"), "no object hidden without occluders")
+check(bpy.context.scene.cycles.transparent_max_bounces < worker.SUN_BLOCKER_MAX_BOUNCES,
+      "usual count of transparent bounces without occluders stopping the sun")
+for name, direction in SUN_DIRECTIONS.items():
+    w, h, pixels = render("sun_" + name, direction)
+    open_floor = brightness(pixels, w, 24, 40, 16, 32)
+    check(sun_capped_floors[name] < open_floor * 0.75,
+          "sun at %s doesn't reach the floor under occluders (%.3f, %.3f without)"
+          % (name, sun_capped_floors[name], open_floor))
+
+# An occluders file without any object is ignored
+path = write_scene("empty_occluders", [])
+with open(os.path.join(os.path.dirname(path), "occluders.obj"), "w") as f:
+    f.write("mtllib occluders.mtl\n")
+with open(path) as f:
+    empty_scene = json.load(f)
+empty_scene["occluders"] = "occluders.obj"
+with open(path, "w") as f:
+    json.dump(empty_scene, f)
+worker.load({"scene": path})
+check(len([o for o in bpy.data.objects if o.type == "MESH"]) == 2, "scene loaded with an empty occluders file")
 
 print("test_worker OK")

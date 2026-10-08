@@ -12,6 +12,7 @@ import com.eteks.sweethome3d.model.CatalogTexture;
 import com.eteks.sweethome3d.model.HomeTexture;
 import com.eteks.sweethome3d.model.Home;
 import com.eteks.sweethome3d.model.Room;
+import com.eteks.sweethome3d.model.Wall;
 import com.eteks.sweethome3d.model.Level;
 import com.eteks.sweethome3d.model.HomeLight;
 
@@ -154,6 +155,18 @@ public class SceneExporterTest {
       upper.setViewable(false);
       SceneExporter.export(twoLevelHome, factory, folder, "all");
       Check.equal(1, countOccluders(occludersFile), "only the ground ceiling when upper level isn't viewable");
+
+      // A hidden level without anything to stop light gives no occluders file, which Blender couldn't read
+      Home emptyLevelHome = TestHomes.createTwoLevelHome();
+      emptyLevelHome.getRooms().get(0).setCeilingVisible(true);
+      for (Wall wall : new java.util.ArrayList<Wall>(emptyLevelHome.getWalls())) {
+        if (wall.getLevel() == emptyLevelHome.getLevels().get(1)) {
+          emptyLevelHome.deleteWall(wall);
+        }
+      }
+      emptyLevelHome.deleteRoom(emptyLevelHome.getRooms().get(1));
+      scene = SceneExporter.export(emptyLevelHome, factory, folder, "all");
+      Check.isTrue(!scene.containsKey("occluders") && !occludersFile.exists(), "empty hidden level, no occluders");
 
       Home roomHome = TestHomes.createRoomHome(null);
       scene = SceneExporter.export(roomHome, factory, folder, "all");

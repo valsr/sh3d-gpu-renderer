@@ -25,6 +25,7 @@ SUN_MIN_HEIGHT = -0.075          # Sun direction height under which it's night, 
 LAMP_WATTS = 200                 # Point light energy for a light source at full power
 EMISSION_STRENGTH = 20           # Emission of a light source material at full power
 TRANSPARENT_ROUGHNESS = 0.05     # Glossiness given to see through materials
+TRANSPARENT_MAX_BOUNCES = 8      # Transparent surfaces a ray may cross
 SUN_BLOCKER_MATERIAL = "sun_blocker"
 SUN_BLOCKER_ANGLE = 3            # Half angle in degrees around the direction of the sun where its light is stopped
 SUN_BLOCKER_MAX_BOUNCES = 32     # Transparent surfaces a ray may cross when occluders stop the sun only
@@ -77,6 +78,7 @@ def configure_scene(scene):
     if hasattr(scene.cycles, "denoising_use_gpu"):
         scene.cycles.denoising_use_gpu = gpu
     scene.cycles.max_bounces = 8
+    scene.cycles.transparent_max_bounces = TRANSPARENT_MAX_BOUNCES
     # Keep the scene in GPU memory between the frames of a video
     scene.render.use_persistent_data = True
     scene.render.resolution_percentage = 100
@@ -213,8 +215,13 @@ def import_occluders(scene, scene_description, folder):
     occluders = scene_description.get("occluders")
     if not occluders:
         return
+    occluders_file = os.path.join(folder, occluders)
+    # Importing a file without object fails
+    with open(occluders_file, encoding="latin-1") as f:
+        if not any(line.startswith("f ") for line in f):
+            return
     scene_objects = set(bpy.data.objects)
-    bpy.ops.wm.obj_import(filepath=os.path.join(folder, occluders),
+    bpy.ops.wm.obj_import(filepath=occluders_file,
                           forward_axis="NEGATIVE_Z", up_axis="Y", global_scale=0.01)
     sun_only = scene_description.get("occludersBlock") == "sun"
     for obj in bpy.data.objects:

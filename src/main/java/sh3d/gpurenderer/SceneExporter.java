@@ -198,12 +198,9 @@ final class SceneExporter {
   }
 
   /**
-   * Returns the viewable items of <code>home</code> with furniture groups replaced by their furniture.
-   */
-  /**
    * Writes in <code>occludersFile</code> what <code>home</code> hides to let a camera see a floor from above
    * but should still stop light: the hidden ceilings of rooms at visible levels, and the items of the levels
-   * which aren't visible. Returns <code>false</code> if the home hides nothing.
+   * which aren't visible. Returns <code>false</code> if the home hides nothing able to stop light.
    */
   private static boolean exportOccluders(Home home, Object3DFactory object3dFactory, File occludersFile,
                                          Set<String> wallAndRoomNames) throws IOException {
@@ -267,9 +264,30 @@ final class SceneExporter {
     } finally {
       writer.close();
     }
-    return true;
+    // A hidden level may be empty or show nothing in 3D, and Blender can't read a file without object
+    return hasFaces(occludersFile);
   }
 
+  /**
+   * Returns <code>true</code> if <code>objFile</code> has at least a face.
+   */
+  private static boolean hasFaces(File objFile) throws IOException {
+    BufferedReader reader = Files.newBufferedReader(objFile.toPath(), StandardCharsets.ISO_8859_1);
+    try {
+      for (String line; (line = reader.readLine()) != null; ) {
+        if (line.startsWith("f ")) {
+          return true;
+        }
+      }
+      return false;
+    } finally {
+      reader.close();
+    }
+  }
+
+  /**
+   * Returns the viewable items of <code>home</code> with furniture groups replaced by their furniture.
+   */
   private static List<Selectable> getExportedItems(Home home) {
     List<Selectable> items = new ArrayList<Selectable>();
     for (Selectable item : home.getSelectableViewableItems()) {
