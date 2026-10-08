@@ -26,6 +26,7 @@ LAMP_WATTS = 200                 # Point light energy for a light source at full
 EMISSION_STRENGTH = 20           # Emission of a light source material at full power
 TRANSPARENT_ROUGHNESS = 0.05     # Glossiness given to see through materials
 TRANSPARENT_MAX_BOUNCES = 8      # Transparent surfaces a ray may cross
+GLASS_IOR = 1.55                 # Refraction index of glass, as in the default renderer
 SUN_BLOCKER_MATERIAL = "sun_blocker"
 SUN_BLOCKER_ANGLE = 3            # Half angle in degrees around the direction of the sun where its light is stopped
 SUN_BLOCKER_MAX_BOUNCES = 32     # Transparent surfaces a ray may cross when occluders stop the sun only
@@ -125,10 +126,39 @@ def adapt_materials(scene_description):
             alpha.default_value = 1
         if not alpha.is_linked and alpha.default_value < 0.5:
             principled.inputs["Roughness"].default_value = TRANSPARENT_ROUGHNESS
+        if (not alpha.is_linked and alpha.default_value < 1 and not base_color.is_linked
+                and material.name not in emissive):
+            make_glass(material, base_color.default_value, alpha.default_value)
         if material.name in emissive:
             set_emission(principled, base_color.default_value, EMISSION_STRENGTH * emissive[material.name])
         else:
             principled.inputs["Emission Strength"].default_value = 0
+
+
+def make_glass(material, color, opacity):
+    """Replaces the surface of a material by clear glass tinted as by the glass shader of the default
+    renderer, where opacity dims color instead of hiding what's behind. Light crosses it without being
+    refracted, a refracting glass leaving in the dark what it should light."""
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    output = next(node for node in nodes if node.type == "OUTPUT_MATERIAL")
+    transparent = nodes.new("ShaderNodeBsdfTransparent")
+    transparent.inputs["Color"].default_value = [1 - opacity + opacity * color[c] for c in range(3)] + [1]
+    reflection = nodes.new("ShaderNodeBsdfGlossy")
+    reflection.inputs["Roughness"].default_value = TRANSPARENT_ROUGHNESS
+    # A pane is often a single face: reflect as when entering glass on both of its sides
+    geometry = nodes.new("ShaderNodeNewGeometry")
+    ior = nodes.new("ShaderNodeMix")
+    ior.inputs["A"].default_value = GLASS_IOR
+    ior.inputs["B"].default_value = 1 / GLASS_IOR
+    links.new(geometry.outputs["Backfacing"], ior.inputs["Factor"])
+    fresnel = nodes.new("ShaderNodeFresnel")
+    links.new(ior.outputs["Result"], fresnel.inputs["IOR"])
+    mix = nodes.new("ShaderNodeMixShader")
+    links.new(fresnel.outputs["Fac"], mix.inputs["Fac"])
+    links.new(transparent.outputs["BSDF"], mix.inputs[1])
+    links.new(reflection.outputs["BSDF"], mix.inputs[2])
+    links.new(mix.outputs["Shader"], output.inputs["Surface"])
 
 
 def create_lights(scene, scene_description):
@@ -322,6 +352,8 @@ def render(command):
     scene.render.resolution_x = command["width"]
     scene.render.resolution_y = command["height"]
     scene.cycles.samples = command["samples"]
+    # In stops, each one doubling the brightness of the image
+    scene.view_settings.exposure = command.get("exposure", 0)
     update_camera(scene, command["camera"], command["width"], command["height"])
     update_sun(scene, command["sunDirection"])
     scene.render.filepath = command["output"]
