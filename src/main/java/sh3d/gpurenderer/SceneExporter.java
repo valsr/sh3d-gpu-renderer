@@ -34,6 +34,7 @@ import javax.vecmath.Vector3f;
 import com.eteks.sweethome3d.j3d.Ground3D;
 import com.eteks.sweethome3d.j3d.OBJWriter;
 import com.eteks.sweethome3d.model.DimensionLine;
+import com.eteks.sweethome3d.model.Elevatable;
 import com.eteks.sweethome3d.model.Home;
 import com.eteks.sweethome3d.model.HomeEnvironment;
 import com.eteks.sweethome3d.model.HomeFurnitureGroup;
@@ -55,6 +56,8 @@ final class SceneExporter {
   static final String SCENE_FILE = "scene.json";
 
   private static final String OBJ_FILE = "scene.obj";
+  private static final String OCCLUDERS_OBJ_FILE = "occluders.obj";
+  private static final String OCCLUDER_NAME_PREFIX = "occluder";
   private static final String SKY_TEXTURE_FILE = "sky.png";
   private static final String ITEM_NAME_PREFIX = "item";
   private static final float  GROUND_SIZE = 1E7f;
@@ -71,6 +74,16 @@ final class SceneExporter {
    * of the file {@link #SCENE_FILE} written in this folder.
    */
   static Map<String, Object> export(Home home, Object3DFactory object3dFactory, File folder) throws IOException {
+    return export(home, object3dFactory, folder, false);
+  }
+
+  /**
+   * Exports <code>home</code> as described above. If <code>hiddenItemsBlockLight</code> is <code>true</code>,
+   * the ceilings and the levels hidden in <code>home</code> are written in a second OBJ file,
+   * named by the <code>occluders</code> entry of the scene, for objects which block light without being seen.
+   */
+  static Map<String, Object> export(Home home, Object3DFactory object3dFactory, File folder,
+                                    boolean hiddenItemsBlockLight) throws IOException {
     HomeEnvironment environment = home.getEnvironment();
     List<Map<String, Object>> lights = new ArrayList<Map<String, Object>>();
     // Lamps with light source materials, with a flag for each of their exported shapes telling if it emits light
@@ -122,6 +135,15 @@ final class SceneExporter {
     }
     addCeilingLights(home, lights);
 
+    File occludersFile = new File(folder, OCCLUDERS_OBJ_FILE);
+    Set<String> occluderWallAndRoomNames = new HashSet<String>();
+    boolean occludersExported = hiddenItemsBlockLight
+        && exportOccluders(home, object3dFactory, occludersFile, occluderWallAndRoomNames);
+    if (!occludersExported) {
+      // Don't leave the occluders of a previous export in the folder
+      occludersFile.delete();
+    }
+
     Map<String, Object> scene = new LinkedHashMap<String, Object>();
     scene.put("obj", OBJ_FILE);
     scene.put("lightColor", getColor(environment.getLightColor()));
@@ -132,9 +154,22 @@ final class SceneExporter {
     scene.put("lights", lights);
     Map<String, List<String>> itemsMaterials = readItemsMaterials(objFile);
     scene.put("emissiveMaterials", getEmissiveMaterials(itemsMaterials, materialLamps, lightSourceShapes));
-    scene.put("opaqueMaterials", environment.getWallsAlpha() > 0
-        ? getMaterials(itemsMaterials, wallAndRoomNames)
-        : new ArrayList<String>());
+    if (occludersExported) {
+      scene.put("occluders", OCCLUDERS_OBJ_FILE);
+    }
+    List<String> opaqueMaterials = new ArrayList<String>();
+    if (environment.getWallsAlpha() > 0) {
+      opaqueMaterials.addAll(getMaterials(itemsMaterials, wallAndRoomNames));
+      if (occludersExported) {
+        // Walls and rooms which block light are opaque too
+        for (String material : getMaterials(readItemsMaterials(occludersFile), occluderWallAndRoomNames)) {
+          if (!opaqueMaterials.contains(material)) {
+            opaqueMaterials.add(material);
+          }
+        }
+      }
+    }
+    scene.put("opaqueMaterials", opaqueMaterials);
     Files.write(new File(folder, SCENE_FILE).toPath(), (Json.write(scene) + "\n").getBytes(StandardCharsets.UTF_8));
     return scene;
   }
@@ -142,6 +177,76 @@ final class SceneExporter {
   /**
    * Returns the viewable items of <code>home</code> with furniture groups replaced by their furniture.
    */
+  /**
+   * Writes in <code>occludersFile</code> what <code>home</code> hides to let a camera see a floor from above
+   * but should still stop light: the hidden ceilings of rooms at visible levels, and the items of the levels
+   * which aren't visible. Returns <code>false</code> if the home hides nothing.
+   */
+  private static boolean exportOccluders(Home home, Object3DFactory object3dFactory, File occludersFile,
+                                         Set<String> wallAndRoomNames) throws IOException {
+    Set<String> hiddenCeilingRoomIds = new HashSet<String>();
+    for (Room room : home.getRooms()) {
+      Level level = room.getLevel();
+      if (!room.isCeilingVisible()
+          && (level == null || level.isViewableAndVisible())) {
+        hiddenCeilingRoomIds.add(room.getId());
+      }
+    }
+    Set<String> hiddenLevelIds = new HashSet<String>();
+    for (Level level : home.getLevels()) {
+      if (level.isViewable() && !level.isVisible()) {
+        hiddenLevelIds.add(level.getId());
+      }
+    }
+    if (hiddenCeilingRoomIds.isEmpty() && hiddenLevelIds.isEmpty()) {
+      return false;
+    }
+
+    // Build occluders from a copy of the home where they're visible, to leave the home unchanged and
+    // because the shape of a wall or a room depends on the other items shown in its home
+    Home shownHome = home.clone();
+    shownHome.getEnvironment().setSubpartSizeUnderLight(0);
+    for (Level level : shownHome.getLevels()) {
+      if (level.isViewable()) {
+        level.setVisible(true);
+      }
+    }
+    List<Selectable> occluders = new ArrayList<Selectable>();
+    for (Room room : shownHome.getRooms()) {
+      if (hiddenCeilingRoomIds.contains(room.getId())) {
+        // Keep the ceiling only, the floor being written with visible items
+        room.setCeilingVisible(true);
+        room.setFloorVisible(false);
+        occluders.add(room);
+      }
+    }
+    for (Selectable item : getExportedItems(shownHome)) {
+      if (item instanceof Elevatable
+          && ((Elevatable)item).getLevel() != null
+          && hiddenLevelIds.contains(((Elevatable)item).getLevel().getId())) {
+        occluders.add(item);
+      }
+    }
+
+    OBJWriter writer = new OBJWriter(occludersFile, null, -1);
+    try {
+      int i = 0;
+      for (Selectable item : occluders) {
+        Node node = (Node)object3dFactory.createObject3D(shownHome, item, true);
+        if (node != null) {
+          String itemName = OCCLUDER_NAME_PREFIX + i++;
+          writer.writeNode(node, itemName);
+          if (item instanceof Wall || item instanceof Room) {
+            wallAndRoomNames.add(itemName);
+          }
+        }
+      }
+    } finally {
+      writer.close();
+    }
+    return true;
+  }
+
   private static List<Selectable> getExportedItems(Home home) {
     List<Selectable> items = new ArrayList<Selectable>();
     for (Selectable item : home.getSelectableViewableItems()) {

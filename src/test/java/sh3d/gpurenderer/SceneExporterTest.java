@@ -11,6 +11,8 @@ import com.eteks.sweethome3d.j3d.Object3DBranchFactory;
 import com.eteks.sweethome3d.model.CatalogTexture;
 import com.eteks.sweethome3d.model.HomeTexture;
 import com.eteks.sweethome3d.model.Home;
+import com.eteks.sweethome3d.model.Room;
+import com.eteks.sweethome3d.model.Level;
 import com.eteks.sweethome3d.model.HomeLight;
 
 public class SceneExporterTest {
@@ -105,7 +107,65 @@ public class SceneExporterTest {
         Check.equal(0.5f, material.get("power"), "emissive material power");
       }
     }
+    // Hidden ceilings and levels are written apart to block light when asked, and only then
+    {
+      Object3DBranchFactory factory = new Object3DBranchFactory();
+      Home twoLevelHome = TestHomes.createTwoLevelHome();
+      Level upper = twoLevelHome.getLevels().get(1);
+      Room groundRoom = twoLevelHome.getRooms().get(0);
+      File occludersFile = new File(folder, "occluders.obj");
+
+      scene = SceneExporter.export(twoLevelHome, factory, folder);
+      Check.isTrue(!scene.containsKey("occluders"), "no occluders unless asked");
+      Check.isTrue(!occludersFile.exists(), "no occluders file unless asked");
+      byte [] sceneObj = Files.readAllBytes(new File(folder, "scene.obj").toPath());
+      String sceneLights = Json.write(scene.get("lights"));
+
+      scene = SceneExporter.export(twoLevelHome, factory, folder, true);
+      Check.equal("occluders.obj", scene.get("occluders"), "occluders file name");
+      Check.equal(6, countOccluders(occludersFile), "ground ceiling, 4 upper walls and upper room block light");
+      Check.isTrue(java.util.Arrays.equals(sceneObj, Files.readAllBytes(new File(folder, "scene.obj").toPath())),
+          "visible items are written the same with occluders");
+      Check.equal(sceneLights, Json.write(scene.get("lights")), "occluders add no light");
+      Check.isTrue(!upper.isVisible() && !groundRoom.isCeilingVisible() && groundRoom.isFloorVisible(),
+          "home unchanged by the export of occluders");
+
+      SceneExporter.export(twoLevelHome, factory, folder, false);
+      Check.isTrue(!occludersFile.exists(), "occluders file of a previous export removed");
+
+      // A visible ceiling is written once, with the visible items
+      groundRoom.setCeilingVisible(true);
+      SceneExporter.export(twoLevelHome, factory, folder, true);
+      Check.equal(5, countOccluders(occludersFile), "visible ceiling isn't an occluder");
+      groundRoom.setCeilingVisible(false);
+
+      // A level which isn't viewable stays out of the scene
+      upper.setViewable(false);
+      SceneExporter.export(twoLevelHome, factory, folder, true);
+      Check.equal(1, countOccluders(occludersFile), "only the ground ceiling when upper level isn't viewable");
+
+      Home roomHome = TestHomes.createRoomHome(null);
+      scene = SceneExporter.export(roomHome, factory, folder, true);
+      Check.isTrue(!scene.containsKey("occluders") && !occludersFile.exists(), "nothing hidden, no occluders");
+      roomHome.getRooms().get(0).setCeilingVisible(false);
+      SceneExporter.export(roomHome, factory, folder, true);
+      Check.equal(1, countOccluders(occludersFile), "hidden ceiling of a home without levels");
+    }
     System.out.println("SceneExporterTest OK");
     System.exit(0);
+  }
+
+  /**
+   * Returns the count of items written in the OBJ file of occluders.
+   */
+  private static int countOccluders(File occludersFile) throws Exception {
+    java.util.Set<String> names = new java.util.HashSet<String>();
+    for (String line : Files.readAllLines(occludersFile.toPath(), StandardCharsets.ISO_8859_1)) {
+      if (line.startsWith("g occluder")) {
+        int separator = line.indexOf('_');
+        names.add(separator > 0 ? line.substring(2, separator) : line.substring(2));
+      }
+    }
+    return names.size();
   }
 }

@@ -16,6 +16,7 @@ import com.eteks.sweethome3d.model.FurnitureCategory;
 import com.eteks.sweethome3d.model.Home;
 import com.eteks.sweethome3d.model.HomeLight;
 import com.eteks.sweethome3d.model.HomePieceOfFurniture;
+import com.eteks.sweethome3d.model.Level;
 import com.eteks.sweethome3d.model.Room;
 import com.eteks.sweethome3d.model.Wall;
 
@@ -112,6 +113,34 @@ final class TestHomes {
       lamp.setPower(0.5f);
       home.addPieceOfFurniture(lamp);
     }
+    return home;
+  }
+
+  /**
+   * Returns a home with the levels "Ground" and "Upper", each with a 5 m x 4 m room closed by walls.
+   * The ceiling of the ground room and the upper level are hidden, as when a floor is viewed from above.
+   */
+  static Home createTwoLevelHome() {
+    Home home = new Home();
+    Level ground = new Level("Ground", 0, 12, 250);
+    Level upper = new Level("Upper", 262, 12, 250);
+    home.addLevel(ground);
+    home.addLevel(upper);
+    for (Level level : new Level [] {ground, upper}) {
+      home.setSelectedLevel(level);
+      float [][] corners = {{0, 0}, {500, 0}, {500, 400}, {0, 400}};
+      for (int i = 0; i < corners.length; i++) {
+        float [] start = corners [i];
+        float [] end = corners [(i + 1) % corners.length];
+        home.addWall(new Wall(start [0], start [1], end [0], end [1], 10, 250));
+      }
+      Room room = new Room(corners);
+      room.setFloorVisible(true);
+      room.setCeilingVisible(level == upper);
+      home.addRoom(room);
+    }
+    upper.setVisible(false);
+    home.setSelectedLevel(ground);
     return home;
   }
 }

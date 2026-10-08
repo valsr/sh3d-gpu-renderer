@@ -120,7 +120,8 @@ public class BlenderRenderer extends AbstractPhotoRenderer {
       boolean sceneUpdated = !this.sceneExported
           || updatedItems != null && !updatedItems.isEmpty();
       if (sceneUpdated) {
-        SceneExporter.export(getHome(), this.object3dFactory, this.sessionFolder);
+        SceneExporter.export(getHome(), this.object3dFactory, this.sessionFolder,
+            Boolean.parseBoolean(getRenderingParameterValue("hiddenItemsBlockLight")));
         this.sceneExported = true;
       }
 
