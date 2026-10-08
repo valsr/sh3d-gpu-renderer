@@ -190,6 +190,7 @@ public class BlenderRenderer extends AbstractPhotoRenderer {
     render.put("width", width);
     render.put("height", height);
     render.put("samples", Integer.parseInt(getRenderingParameterValue("samples")));
+    render.put("exposure", Float.parseFloat(getRenderingParameterValue("exposure")));
     render.put("camera", cameraDescription);
     render.put("sunDirection", getSunDirection(camera));
     return render;

@@ -42,6 +42,20 @@ public class BlenderRendererTest {
     javax.imageio.ImageIO.write(image, "png", new File(folder, name + ".png"));
   }
 
+  /**
+   * Returns the mean of the red, green and blue components of the pixels of <code>image</code>.
+   */
+  private static double getBrightness(BufferedImage image) {
+    long total = 0;
+    for (int y = 0; y < image.getHeight(); y++) {
+      for (int x = 0; x < image.getWidth(); x++) {
+        int rgb = image.getRGB(x, y);
+        total += ((rgb >> 16) & 0xFF) + ((rgb >> 8) & 0xFF) + (rgb & 0xFF);
+      }
+    }
+    return total / (3. * image.getWidth() * image.getHeight());
+  }
+
   public static void main(String [] args) throws Exception {
     System.setProperty("sh3d.gpurenderer.BlenderRenderer.lowQuality.samples", "16");
     Check.isTrue(!BlenderRenderer.isBlenderAvailable("/nonexistent/blender"), "missing Blender detected");
@@ -104,6 +118,14 @@ public class BlenderRendererTest {
     BufferedImage imageAfterStop = new BufferedImage(160, 120, BufferedImage.TYPE_INT_RGB);
     renderer.render(imageAfterStop, camera, null);
     Check.isTrue(countDifferentPixels(image, imageAfterStop) < 160 * 120 / 20, "same image rendered after a stop");
+
+    // Exposure is read at each rendering
+    System.setProperty("sh3d.gpurenderer.BlenderRenderer.lowQuality.exposure", "2");
+    BufferedImage brighterImage = new BufferedImage(160, 120, BufferedImage.TYPE_INT_RGB);
+    renderer.render(brighterImage, camera, null);
+    save(brighterImage, "room-center-brighter");
+    Check.isTrue(getBrightness(brighterImage) > getBrightness(imageAfterStop) * 1.2, "exposure brightens the image");
+    System.clearProperty("sh3d.gpurenderer.BlenderRenderer.lowQuality.exposure");
 
     renderer.dispose();
     Check.isTrue(!sessionFolder.exists(), "session folder deleted by dispose");

@@ -75,13 +75,16 @@ def write_scene(name, lights, emissive=(), opaque=()):
 
 
 def render(name, sun, position=(0, 600, 0), direction=(0, -1, 0), up=(0, 0, 1), lens="PINHOLE",
-           width=64, height=48):
+           width=64, height=48, exposure=None):
     """Renders from above by default and returns (width, height, RGBA float pixels from bottom left)."""
     output = os.path.join(TMP, name + ".png")
-    worker.render({"output": output, "width": width, "height": height, "samples": 16,
-                   "camera": {"position": list(position), "direction": list(direction), "up": list(up),
-                              "fov": 1.1, "lens": lens},
-                   "sunDirection": sun})
+    command = {"output": output, "width": width, "height": height, "samples": 16,
+               "camera": {"position": list(position), "direction": list(direction), "up": list(up),
+                          "fov": 1.1, "lens": lens},
+               "sunDirection": sun}
+    if exposure is not None:
+        command["exposure"] = exposure
+    worker.render(command)
     image = bpy.data.images.load(output)
     result = (image.size[0], image.size[1], list(image.pixels))
     bpy.data.images.remove(image)
@@ -165,6 +168,18 @@ lit_floor = brightness(lit, w, 24, 40, 16, 32)
 check(lit_floor > 10 * dark_floor + 0.3, "floor is lit by a lamp at night (%.3f against %.3f)" % (lit_floor, dark_floor))
 check(len([o for o in bpy.data.objects if o.type == "LIGHT"]) == 1, "loading a scene replaces the previous one")
 
+# Exposure brightens or darkens the image, and an image rendered without it isn't changed
+w, h, brighter = render("lamp_brighter", NIGHT, exposure=2)
+brighter_floor = brightness(brighter, w, 24, 40, 16, 32)
+check(brighter_floor > lit_floor * 1.2, "exposure brightens the image (%.3f against %.3f)" % (brighter_floor, lit_floor))
+w, h, darker = render("lamp_darker", NIGHT, exposure=-2)
+darker_floor = brightness(darker, w, 24, 40, 16, 32)
+check(darker_floor < lit_floor * 0.8, "negative exposure darkens the image (%.3f against %.3f)" % (darker_floor, lit_floor))
+w, h, unexposed = render("lamp_unexposed", NIGHT)
+unexposed_floor = brightness(unexposed, w, 24, 40, 16, 32)
+check(abs(unexposed_floor - lit_floor) < lit_floor * 0.05,
+      "exposure is back to none without it (%.3f against %.3f)" % (unexposed_floor, lit_floor))
+
 # Light source materials
 worker.load({"scene": write_scene("emissive", [], [{"name": "bulb", "power": 0.5}])})
 bulb = bpy.data.materials["bulb"].node_tree.nodes["Principled BSDF"]
@@ -177,6 +192,39 @@ check(abs(bulb.inputs["Alpha"].default_value - 0.4) < 0.01, "transparent materia
 worker.load({"scene": write_scene("opaque", [], opaque=["bulb"])})
 bulb = bpy.data.materials["bulb"].node_tree.nodes["Principled BSDF"]
 check(bulb.inputs["Alpha"].default_value == 1, "listed material made opaque")
+
+# Glass lets most of the light through, as with the glass shader of the default renderer
+def glass_scene(name, glass):
+    """Writes a scene with a floor under a wide pane 3 m above it, if glass is True."""
+    path = write_scene(name, [])
+    folder = os.path.dirname(path)
+    with open(os.path.join(folder, "scene.obj"), "a") as f:
+        if glass:
+            f.write("o pane\nv -3000 300 -3000\nv -3000 300 3000\nv 3000 300 3000\nv 3000 300 -3000\n"
+                    "usemtl glass\nf 13 14 15 16\n")
+    with open(os.path.join(folder, "scene.mtl"), "a") as f:
+        f.write("newmtl glass\nKd 0.8 0.8 0.8\nd 0.5\n")
+    return path
+
+
+def lit_floor_under(name, glass):
+    """Returns the linear brightness of the floor seen from under the pane."""
+    worker.load({"scene": glass_scene(name, glass)})
+    view_settings = bpy.context.scene.view_settings
+    view_settings.view_transform = "Standard"
+    w, h, pixels = render(name, NOON, position=(-150, 250, 0), exposure=-3)
+    value = brightness(pixels, w, 24, 40, 16, 32) / 3
+    check(value < 0.9, "floor isn't overexposed (%.3f)" % value)
+    return ((value + 0.055) / 1.055) ** 2.4
+
+
+open_floor = lit_floor_under("no_glass", False)
+glass_floor = lit_floor_under("glass", True)
+check(glass_floor > 0.8 * open_floor,
+      "glass lets most of the light through (%.3f under glass, %.3f without)" % (glass_floor, open_floor))
+check(glass_floor < 0.97 * open_floor,
+      "glass stops a part of the light (%.3f under glass, %.3f without)" % (glass_floor, open_floor))
+bpy.context.scene.view_settings.view_transform = "AgX"
 
 # Textured materials show their image and use its transparency
 folder = os.path.dirname(write_scene("textured", []))

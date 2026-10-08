@@ -38,6 +38,7 @@ System properties, all optional:
 | `sh3d.gpurenderer.BlenderRenderer.lowQuality.samples` | 64 | Samples per pixel at the third quality level |
 | `sh3d.gpurenderer.BlenderRenderer.highQuality.samples` | 256 | Samples per pixel at the fourth quality level |
 | `sh3d.gpurenderer.BlenderRenderer.lowQuality.hiddenItemsBlockLight`, `…highQuality.hiddenItemsBlockLight` | `false` | What ceilings and levels hidden in the 3D view block without being seen, to view a floor from above lit as if the home was more complete: `sun` for the direct light of the sun only, `all` for all light (rooms without window nor lamp are then dark) |
+| `sh3d.gpurenderer.BlenderRenderer.lowQuality.exposure`, `…highQuality.exposure` | 0 | Exposure of the image in stops, each one doubling its brightness and a negative value darkening it. A view from inside a room lit by its windows is closer to a photo around 2 |
 
 Light and sky intensities are constants at the top of
 `src/main/resources/sh3d/gpurenderer/worker.py`.

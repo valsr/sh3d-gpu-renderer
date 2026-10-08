@@ -81,7 +81,7 @@ to Blender's (m, Z up) in one place.
 Java to Blender, one JSON object per line on stdin:
 
 - `{"cmd":"load","scene":"/path/scene.json"}`
-- `{"cmd":"render","output":"/path/frame.png","width":W,"height":H,"samples":N,
+- `{"cmd":"render","output":"/path/frame.png","width":W,"height":H,"samples":N,"exposure":stops,
    "camera":{"position":[x,y,z],"direction":[x,y,z],"up":[x,y,z],"fov":rad,"lens":"PINHOLE|NORMAL|FISHEYE|SPHERICAL"},
    "sunDirection":[x,y,z]}`
 - `{"cmd":"quit"}`
