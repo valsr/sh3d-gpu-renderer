@@ -35,7 +35,6 @@ import javax.vecmath.Vector3f;
 import com.eteks.sweethome3d.j3d.Ground3D;
 import com.eteks.sweethome3d.j3d.OBJWriter;
 import com.eteks.sweethome3d.model.DimensionLine;
-import com.eteks.sweethome3d.model.Elevatable;
 import com.eteks.sweethome3d.model.Home;
 import com.eteks.sweethome3d.model.HomeEnvironment;
 import com.eteks.sweethome3d.model.HomeFurnitureGroup;
@@ -99,7 +98,7 @@ final class SceneExporter {
 
   /**
    * Exports <code>home</code> as described above. If <code>occludersBlock</code> isn't <code>null</code>,
-   * the ceilings and the levels hidden in <code>home</code> are written in a second OBJ file,
+   * the ceilings hidden at the selected level of <code>home</code> are written in a second OBJ file,
    * named by the <code>occluders</code> entry of the scene, for objects which aren't seen but block
    * the light of the sun (<code>"sun"</code>) or all light (<code>"all"</code>), as the
    * <code>occludersBlock</code> entry tells.
@@ -198,32 +197,31 @@ final class SceneExporter {
   }
 
   /**
-   * Writes in <code>occludersFile</code> what <code>home</code> hides to let a camera see a floor from above
-   * but should still stop light: the hidden ceilings of rooms at visible levels, and the items of the levels
-   * which aren't visible. Returns <code>false</code> if the home hides nothing able to stop light.
+   * Writes in <code>occludersFile</code> the hidden ceilings of the rooms at the selected level of
+   * <code>home</code>, the floor seen from above, to stop the light which would fall in it from where
+   * the camera looks. Levels hidden above or under that floor block nothing, so that the light
+   * of the sun still reaches the ground and the floors under it.
+   * Returns <code>false</code> if the selected level hides no ceiling.
    */
   private static boolean exportOccluders(Home home, Object3DFactory object3dFactory, File occludersFile,
                                          Set<String> wallAndRoomNames) throws IOException {
+    Level selectedLevel = home.getSelectedLevel();
     Set<String> hiddenCeilingRoomIds = new HashSet<String>();
     for (Room room : home.getRooms()) {
       Level level = room.getLevel();
+      // Without levels, rooms and the selected level are both null
       if (!room.isCeilingVisible()
+          && level == selectedLevel
           && (level == null || level.isViewableAndVisible())) {
         hiddenCeilingRoomIds.add(room.getId());
       }
     }
-    Set<String> hiddenLevelIds = new HashSet<String>();
-    for (Level level : home.getLevels()) {
-      if (level.isViewable() && !level.isVisible()) {
-        hiddenLevelIds.add(level.getId());
-      }
-    }
-    if (hiddenCeilingRoomIds.isEmpty() && hiddenLevelIds.isEmpty()) {
+    if (hiddenCeilingRoomIds.isEmpty()) {
       return false;
     }
 
     // Build occluders from a copy of the home where they're visible, to leave the home unchanged and
-    // because the shape of a wall or a room depends on the other items shown in its home
+    // because the shape of a ceiling depends on the other items shown in its home, like staircases
     Home shownHome = home.clone();
     shownHome.getEnvironment().setSubpartSizeUnderLight(0);
     for (Level level : shownHome.getLevels()) {
@@ -231,7 +229,7 @@ final class SceneExporter {
         level.setVisible(true);
       }
     }
-    List<Selectable> occluders = new ArrayList<Selectable>();
+    List<Room> occluders = new ArrayList<Room>();
     for (Room room : shownHome.getRooms()) {
       if (hiddenCeilingRoomIds.contains(room.getId())) {
         // Keep the ceiling only, the floor being written with visible items
@@ -240,31 +238,22 @@ final class SceneExporter {
         occluders.add(room);
       }
     }
-    for (Selectable item : getExportedItems(shownHome)) {
-      if (item instanceof Elevatable
-          && ((Elevatable)item).getLevel() != null
-          && hiddenLevelIds.contains(((Elevatable)item).getLevel().getId())) {
-        occluders.add(item);
-      }
-    }
 
     OBJWriter writer = new OBJWriter(occludersFile, null, -1);
     try {
       int i = 0;
-      for (Selectable item : occluders) {
-        Node node = (Node)object3dFactory.createObject3D(shownHome, item, true);
+      for (Room room : occluders) {
+        Node node = (Node)object3dFactory.createObject3D(shownHome, room, true);
         if (node != null) {
           String itemName = OCCLUDER_NAME_PREFIX + i++;
           writer.writeNode(node, itemName);
-          if (item instanceof Wall || item instanceof Room) {
-            wallAndRoomNames.add(itemName);
-          }
+          wallAndRoomNames.add(itemName);
         }
       }
     } finally {
       writer.close();
     }
-    // A hidden level may be empty or show nothing in 3D, and Blender can't read a file without object
+    // A ceiling may show nothing in 3D, and Blender can't read a file without object
     return hasFaces(occludersFile);
   }
 
